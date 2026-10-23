@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111014"><meta name="description" content="One room. Everyone's soundtrack. Scan, choose a song, and join the queue.">
+  <title>Qbeat — The shared jukebox</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><a class="brand" href="/"><span class="logo">q.</span> QBEAT<span class="brand-sub">THE SHARED JUKEBOX</span></a><nav><a href="/" id="guest-nav">Request a song</a><a href="/host" id="host-nav">Host controls ↗</a></nav></header>
+  <main>
+    <section id="login" class="panel login" hidden>
+      <span class="eyebrow">BACKSTAGE ACCESS</span><h1>You're in control.</h1><p>Enter the host PIN to manage the queue or connect this screen as the player.</p>
+      <form id="login-form"><label for="pin">Host PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required><button>Unlock host controls ↗</button></form>
+      <p id="login-error" role="alert"></p>
+    </section>
+    <div id="app" hidden>
+      <section class="intro"><div><span class="eyebrow"><i></i> ONE ROOM. EVERYONE'S SOUNDTRACK.</span><h1 id="headline">Good company.<br><span>Great music.</span></h1><p id="intro-copy">Your next favourite song is someone's next pick.<br>Find a track, join the queue, set the mood.</p></div><div class="record-art" aria-hidden="true"><div class="record"><div class="label">QBEAT<span>33⅓ RPM</span></div></div><div class="record-caption">PASS THE AUX.<br>KEEP THE VIBE.</div></div></section>
+      <div id="connection" class="notice" role="status" hidden></div>
+      <div class="layout">
+        <section class="primary">
+          <div id="guest-content">
+            <div class="section-heading"><h2>Make your pick</h2><span class="muted">01 / DISCOVER</span></div>
+            <form id="search-form" class="search"><label class="sr-only" for="search">Song, artist, or YouTube link</label><input id="search" placeholder="Search a song, artist, or paste a YouTube link" required maxlength="160"><button aria-label="Search YouTube">Search ↗</button></form>
+            <p id="search-hint" class="muted"></p>
+            <label class="name-label" for="guest-name">Your name <span class="muted">(optional)</span><input id="guest-name" placeholder="Who’s on the decks?" maxlength="30" autocomplete="nickname"></label>
+            <div id="search-status" role="status" class="muted"></div><div id="results"></div>
+            <div id="welcome" class="welcome"><span class="small-record">♫</span><h3>A little you. A little everyone.</h3><p>Add a song you love. We'll play it when it's your turn.</p><div class="tags"><span>Scan the QR</span><b>→</b><span>Pick a track</span><b>→</b><span>Hear it here</span></div></div>
+          </div>
+          <div id="host-content" hidden>
+            <div class="section-heading"><h2>Set the mood</h2><span class="muted">HOST DESK</span></div>
+            <div class="controls"><button id="pause">Pause</button><button id="skip" class="secondary">Skip track →</button><button id="requests" class="secondary">Close requests</button></div>
+            <p class="muted">Open the player on the TV, sign in with your host PIN, then select Start player. Keep one player screen open.</p>
+            <a class="button" href="/player" target="_blank" rel="noopener">Open TV player ↗</a><button id="logout" class="text-button">Sign out</button>
+          </div>
+          <div id="player-content" hidden>
+            <div class="section-heading"><h2>Now spinning</h2><button id="fullscreen" class="text-button">Fullscreen ⛶</button></div>
+            <div class="video-box"><div id="youtube"></div><div id="player-welcome"><div class="small-record">▶</div><h3>Give the room a soundtrack.</h3><p>Connect this screen to play the shared queue.</p></div></div>
+            <div class="controls"><button id="start-player">Start player ▶</button><button id="player-pause" class="secondary">Pause</button><button id="player-skip" class="secondary">Skip →</button></div>
+            <p id="player-message" role="status" class="muted">Press Start player once to enable sound on this screen.</p>
+          </div>
+          <div class="queue-heading section-heading"><h2>Up next <span id="queue-count" class="count">0</span></h2><span class="muted">THE COLLECTIVE MIX</span></div><div id="queue"></div>
+        </section>
+        <aside>
+          <div class="now-card panel"><span class="eyebrow"><span class="bars">▂ ▅ ▃ ▆</span> NOW PLAYING</span><img id="now-art" alt="" hidden><h3 id="now-title">The room is yours.</h3><p id="now-artist" class="muted">Add the first song to get things going.</p><div class="now-footer"><span id="player-status"><i></i> Player offline</span><span>YouTube</span></div></div>
+          <div class="qr-card panel"><div><span class="eyebrow">GOOD MUSIC IS BETTER SHARED</span><h3>Bring your<br>friends into the mix.</h3></div><img src="/qr.png" alt="Scan this QR code to open the guest song request page" width="170" height="170"><p>Scan. Pick. Play.</p><a id="guest-link" href="/" class="muted">Open guest page ↗</a><button id="copy-link" class="text-button">Copy invite link</button></div>
+          <p class="aside-note">Everyone gets a turn.<br>Up to 3 waiting tracks per guest.</p>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer><a class="brand" href="/">QBEAT<span class="muted">Music brings us together.</span></a><span class="muted">POWERED BY YOUR PICKS · PLAYBACK BY YOUTUBE</span></footer>
+  <div id="toast" role="status" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

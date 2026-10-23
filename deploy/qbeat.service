@@ -1,0 +1,25 @@
+[Unit]
+Description=Qbeat shared music queue
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qbeat
+Group=qbeat
+WorkingDirectory=/srv/qbeat
+EnvironmentFile=/etc/qbeat.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/qbeat/.venv/bin/gunicorn --bind 127.0.0.1:8091 --workers 1 --threads 8 --timeout 30 --access-logfile - --error-logfile - app:app
+Restart=always
+RestartSec=3
+StateDirectory=qbeat
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/qbeat
+
+[Install]
+WantedBy=multi-user.target
