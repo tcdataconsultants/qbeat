@@ -23,6 +23,7 @@ class QueueTests(unittest.TestCase):
             c.execute('DELETE FROM player_events')
             c.execute('DELETE FROM search_cache')
             c.execute('DELETE FROM profiles')
+            c.execute('DELETE FROM video_details')
             c.execute("UPDATE settings SET paused=0,accepting=1,player='',heartbeat=0")
         m.hits.clear()
         self.guest = m.app.test_client()
@@ -116,9 +117,34 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(first.json['results'][0]['title'],'A & B')
             second=self.guest.get('/api/search?q=ledzeppelin')
             self.assertTrue(second.json['cached'])
-            self.assertEqual(remote.call_count,1)
-            self.assertIn('q=LedZeppelin',remote.call_args[0][0])
+            self.assertEqual(remote.call_count,2)
+            self.assertIn('q=LedZeppelin',remote.call_args_list[0].args[0])
             m.metadata.assert_not_called()
+
+    def test_batched_video_lengths_cache_and_live_labels(self):
+        details={'items':[
+            {'id':'abcdefghijk','contentDetails':{'duration':'PT4M12S'},'snippet':{'liveBroadcastContent':'none'}},
+            {'id':'bcdefghijkl','contentDetails':{'duration':'PT1H2M3S'},'snippet':{}},
+            {'id':'cdefghijklm','contentDetails':{'duration':'PT0S'},'snippet':{'liveBroadcastContent':'live'}}]}
+        songs=[dict(video_id=vid,title='Song',artist='Artist') for vid in ('abcdefghijk','bcdefghijkl','cdefghijklm')]
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',return_value=details) as remote:
+            result=m.enrich_durations(songs)
+            self.assertEqual([r['duration_label'] for r in result],['4:12','1:02:03','LIVE'])
+            self.assertEqual(result[0]['duration_seconds'],252)
+            self.assertIsNone(result[2]['duration_seconds'])
+            self.assertEqual(remote.call_count,1)
+            m.enrich_durations(songs)
+            self.assertEqual(remote.call_count,1)
+        self.assertEqual(m.parse_duration('P1DT2H3M4S'),93784)
+        self.assertIsNone(m.parse_duration('unknown'))
+
+    def test_duration_api_failure_does_not_break_search(self):
+        song={'items':[{'id':{'videoId':'abcdefghijk'},'snippet':{'title':'Song','channelTitle':'Artist'}}]}
+        failed=HTTPError('https://example.invalid',403,'Forbidden',{},io.BytesIO(b'{}'))
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=[song,failed]):
+            result=self.guest.get('/api/search?q=artist')
+            self.assertEqual(result.status_code,200)
+            self.assertEqual(result.json['results'][0]['duration_label'],'Length unavailable')
 
     def test_search_distinguishes_quota_and_configuration_errors(self):
         for reason,phrase in [('quotaExceeded','daily search allowance'),('accessNotConfigured','API key')]:
@@ -138,6 +164,15 @@ class QueueTests(unittest.TestCase):
             result=self.guest.get('/api/search?q=Slayyyter')
             self.assertEqual(result.status_code,200)
             self.assertEqual([v['title'] for v in result.json['results']],['Playable song'])
+
+    def test_karaoke_search_is_separate_from_normal_search(self):
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',return_value={'items':[]}) as remote:
+            self.guest.get('/api/search?q=Song')
+            self.guest.get('/api/search?q=Song&karaoke=1')
+            self.assertEqual(remote.call_count,2)
+            self.assertIn('q=Song+karaoke+lyrics',remote.call_args[0][0])
+            self.guest.get('/api/search?q=song&karaoke=1')
+            self.assertEqual(remote.call_count,2)
 
     def test_search_retries_transient_errors_and_cache_survives_init(self):
         with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=[URLError('timeout'),{'items':[]}]) as remote:

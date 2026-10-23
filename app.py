@@ -33,7 +33,7 @@ hits = defaultdict(deque)
 cache = {}
 search_locks = [threading.Lock() for _ in range(64)]
 COLORS = ('#d6fa77', '#b2a0ed', '#ffb3c6', '#79d9f2', '#ffc978', '#91e5b0', '#f2f0e9', '#ff9d85')
-ICONS = ('♫', '🎧', '🎸', '🎤', '🪩', '✨', '🌴', '🦊', '🐱', '🔥', '💃', '🚀')
+ICONS = ('♫', '🎧', '🎸', '🎤', '🪩', '✨', '🌴', '🦊', '🐱', '🔥', '💃', '🚀', '💖')
 AVATAR_DIR = os.path.join(os.path.dirname(DB), 'avatars')
 
 
@@ -66,6 +66,9 @@ def init():
         CREATE TABLE IF NOT EXISTS profiles (
           id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#d6fa77',
           icon TEXT NOT NULL DEFAULT '♫', photo TEXT);
+        CREATE TABLE IF NOT EXISTS video_details (
+          video_id TEXT PRIMARY KEY, seconds INTEGER, label TEXT NOT NULL, is_live INTEGER NOT NULL DEFAULT 0,
+          expires REAL NOT NULL);
         ''')
 
 
@@ -122,6 +125,75 @@ def error(message, status=400):
     return jsonify(error=message), status
 
 
+def format_track(song):
+    """Conservative display labels; retain the unmodified YouTube source title."""
+    item = dict(song)
+    raw = html.unescape(str(item.get('title', '')))
+    artist = html.unescape(str(item.get('artist', 'YouTube')))
+    artist = re.sub(r'\s*-\s*Topic$|VEVO$', '', artist, flags=re.I).strip()
+    label = re.sub(r'\s*[\[(](?:official\s+(?:music\s+)?(?:video|audio|visuali[sz]er)|(?:official\s+)?lyric(?:s|\s+video)?|(?:full\s+)?HD|4K|visuali[sz]er)[\])]\s*', ' ', raw, flags=re.I)
+    label = re.sub(r'\s*[-–—]?\s*official\s+(?:music\s+)?(?:video|audio)\s*$', '', label, flags=re.I).strip()
+    parts = re.split(r'\s+[-–—]\s+', label, maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        artist, label = parts[0].strip(), parts[1].strip()
+    item.update(display_title=label.strip(' "“”') or raw, display_artist=artist or item.get('artist', 'YouTube'))
+    return item
+
+
+def parse_duration(value):
+    match = re.fullmatch(r'P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?', str(value))
+    if not match or not any(part is not None for part in match.groups()):
+        return None
+    days, hours, minutes, seconds = (float(v or 0) for v in match.groups())
+    return int(days*86400 + hours*3600 + minutes*60 + seconds)
+
+
+def duration_label(seconds):
+    if seconds is None or seconds <= 0:
+        return 'Length unavailable'
+    hours, remaining = divmod(seconds, 3600)
+    minutes, secs = divmod(remaining, 60)
+    return f'{hours}:{minutes:02d}:{secs:02d}' if hours else f'{minutes}:{secs:02d}'
+
+
+def enrich_durations(results):
+    """One batched video-details request; duration failures never discard songs."""
+    if not results:
+        return results
+    ids = list(dict.fromkeys(item['video_id'] for item in results))
+    placeholders = ','.join('?' for _ in ids)
+    with db() as c:
+        saved = {r['video_id']: dict(r) for r in c.execute('SELECT * FROM video_details WHERE video_id IN ('+placeholders+') AND expires>?', (*ids, time.time()))}
+    missing = [vid for vid in ids if vid not in saved]
+    if missing and API_KEY:
+        fetched = {}
+        try:
+            details = remote_json('https://www.googleapis.com/youtube/v3/videos?' + urlencode(dict(
+                key=API_KEY, part='contentDetails,snippet', id=','.join(missing),
+                fields='items(id,contentDetails(duration),snippet(liveBroadcastContent))')))
+            for item in details.get('items', []):
+                vid = item.get('id') if isinstance(item, dict) else None
+                if not isinstance(vid, str) or vid not in missing:
+                    continue
+                live = (item.get('snippet') or {}).get('liveBroadcastContent')
+                seconds = parse_duration((item.get('contentDetails') or {}).get('duration'))
+                label = 'LIVE' if live == 'live' else 'Scheduled' if live == 'upcoming' else duration_label(seconds)
+                fetched[vid] = dict(seconds=seconds if live not in ('live', 'upcoming') else None,
+                                    label=label, is_live=int(live == 'live'), expires=time.time()+86400)
+        except (HTTPError, URLError, TimeoutError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            app.logger.warning('YouTube durations unavailable status=%s', getattr(exc, 'code', type(exc).__name__))
+        with db() as c:
+            for vid in missing:
+                detail = fetched.get(vid, dict(seconds=None, label='Length unavailable', is_live=0, expires=time.time()+120))
+                c.execute('INSERT OR REPLACE INTO video_details VALUES(?,?,?,?,?)', (vid, detail['seconds'], detail['label'], detail['is_live'], detail['expires']))
+                saved[vid] = detail
+            c.execute('DELETE FROM video_details WHERE expires<?', (time.time(),))
+    for item in results:
+        detail = saved.get(item['video_id'], {})
+        item.update(duration_seconds=detail.get('seconds'), duration_label=detail.get('label', 'Length unavailable'), is_live=bool(detail.get('is_live', False)))
+    return results
+
+
 @app.before_request
 def guard():
     if 'guest_id' not in session:
@@ -134,6 +206,8 @@ def guard():
             return error('Request origin rejected.', 403)
     if request.path.startswith('/api/host/') and not session.get('host'):
         return error('Host sign-in required.', 401)
+    if request.path.startswith('/api/host/'):
+        session.setdefault('tv_id', secrets.token_urlsafe(24))
 
 
 @app.after_request
@@ -156,7 +230,8 @@ def page():
 @app.get('/qr.png')
 def qr():
     out = io.BytesIO()
-    qrcode.make(PUBLIC_URL + '/').save(out, format='PNG')
+    target = 'https://89.167.98.40:8443/personal' if request.args.get('target') == 'personal' else PUBLIC_URL + '/'
+    qrcode.make(target).save(out, format='PNG')
     out.seek(0)
     return send_file(out, mimetype='image/png')
 
@@ -177,7 +252,7 @@ def tv_app_download():
 def state():
     with db() as c:
         settings = dict(c.execute('SELECT * FROM settings WHERE id=1').fetchone())
-        songs = [dict(r) for r in c.execute("""SELECT s.id,s.video_id,s.title,s.artist,s.status,
+        songs = [format_track(dict(r)) for r in c.execute("""SELECT s.id,s.video_id,s.title,s.artist,s.status,
             CASE WHEN p.name IS NOT NULL AND p.name!='' THEN p.name ELSE s.guest END AS guest,
             COALESCE(p.color,'#d6fa77') AS guest_color,COALESCE(p.icon,'♫') AS guest_icon,
             CASE WHEN p.photo IS NOT NULL THEN '/avatars/'||p.photo ELSE NULL END AS guest_photo
@@ -293,22 +368,23 @@ def search():
             if not vid:
                 return error('Paste a link to a single YouTube video, or search by song and artist.', 422)
             try:
-                return jsonify(results=[metadata(vid)])
+                return jsonify(results=enrich_durations([metadata(vid)]))
             except HTTPError as e:
                 if e.code in (400, 401, 403, 404):
                     return error('That YouTube video is unavailable or private. Try a different link.', 422)
                 raise
         if not API_KEY:
             return error('Song search needs a YouTube API key. For now, paste a YouTube video link above.', 503)
-        key = q.casefold()
+        karaoke = request.args.get('karaoke') == '1'
+        key = q.casefold() + ('|karaoke' if karaoke else '')
         with search_locks[hash(key) % len(search_locks)]:
             with db() as c:
                 saved = c.execute('SELECT results FROM search_cache WHERE query=? AND expires>?', (key, time.time())).fetchone()
             if saved:
-                return jsonify(results=json.loads(saved['results']), cached=True)
+                return jsonify(results=enrich_durations(json.loads(saved['results'])), cached=True)
             url = 'https://www.googleapis.com/youtube/v3/search?' + urlencode(dict(
                 key=API_KEY, part='snippet', type='video', videoEmbeddable='true',
-                videoCategoryId='10', safeSearch='moderate', maxResults=12, q=q))
+                videoCategoryId='10', safeSearch='moderate', maxResults=12, q=(q + ' karaoke lyrics') if karaoke else q))
             for attempt in range(2):
                 try:
                     data = remote_json(url)
@@ -338,6 +414,7 @@ def search():
                     continue
                 results.append(dict(video_id=vid, title=html.unescape(title),
                                     artist=html.unescape(artist) if isinstance(artist, str) else 'YouTube'))
+            results = enrich_durations(results)
             with db() as c:
                 c.execute('INSERT OR REPLACE INTO search_cache(query,results,expires) VALUES(?,?,?)',
                           (key, json.dumps(results), time.time() + 86400))
@@ -398,6 +475,9 @@ def add():
 @app.post('/api/host/control')
 def control():
     data = request.get_json() or {}
+    personal_response = app.tv_control(data)
+    if personal_response is not None:
+        return personal_response
     action = data.get('action')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -420,6 +500,9 @@ def control():
 @app.post('/api/host/player')
 def player():
     data = request.get_json() or {}
+    personal_response = app.tv_player(data)
+    if personal_response is not None:
+        return personal_response
     client = str(data.get('client', ''))[:80]
     if not client:
         return error('Missing player identity.')
@@ -455,3 +538,5 @@ def health():
 
 
 init()
+from personal import register_personal
+register_personal(app, db, lambda vid: metadata(vid), error, limited, format_track)

@@ -12,9 +12,25 @@ Native Java TV activity with a visible YouTube WebView player, native queue/QR s
 
 Install over version 1.0.0 to retain the host session. The same signing identity is used for updates. New native controls and launcher artwork require updating the APK; website changes arrive on refresh.
 
-Public download: http://89.167.98.40:8090/qbeat.apk
+Public download: https://89.167.98.40:8443/qbeat.apk?v=1.2.1
 
 Installation guide: http://89.167.98.40:8090/tv-app
+
+## Version 1.2.1
+
+**More → Turn countdown on/off** toggles a saved remaining-time display below the video. It follows the player's actual position, freezes naturally on pause, and hides during introductions, unavailable-duration states, or playback errors. The shared web player and personal phone player also offer a locally saved countdown toggle. It is independent of the final-ten-second Coming next strip.
+
+## Version 1.2.0
+
+- Uses the HTTPS backend on port 8443; the backend IP certificate has automated renewal.
+- **More → Music source / accounts** chooses the shared room or a playlist from an explicitly paired account. Link codes are created on the TV and entered on the authenticated personal page. No account password is entered or stored on the TV. The linked-account list is scoped to the TV's host session, and private playback does not mutate the room queue.
+- **Compact player** uses a visible 356×200dp WebView, with more room for artist/song labels. Video remains visible while audio plays.
+- Display labels use the backend's cleaned `display_title` and `display_artist` fields while the original title remains with the YouTube player. Guest icons appear to the right of names.
+- Before loading each video, a two-second native introduction slides across the screen with **Picked by {name}** and a 160dp guest photo or icon. The previous player is paused; the main view is replaced until the introduction completes, and only then is the next video loaded. Introductions can be disabled under More. Navigating away, switching sources, or receiving a changed track cancels an in-progress introduction.
+- The QR code switches to the secure personal page in personal TV mode.
+- **Karaoke versions** is a search option on the phone. Lyrics and backing vocals come from the selected video; there is no independent vocal adjustment.
+
+YouTube's recommendations and branding remain controlled by its official player. This build does not cover those controls or create a hidden audio-only player. Version 1.2.0's new native UI and animation require physical-device testing after installation; the build/signature, API isolation, and web flows are verified automatically.
 
 ## Build
 
@@ -32,12 +48,12 @@ To create a separate signing identity on another machine, use `keytool -genkeypa
 
 ## Architecture
 
-- Backend URL is a build-time constant in `MainActivity.java`.
+- Backend URL is a build-time constant in `MainActivity.java`: `https://89.167.98.40:8443`.
 - Host PIN is exchanged for a session cookie and is not stored. The session cookie is kept in app-private preferences. Sign out deletes it. No host PIN or YouTube API key is bundled in the APK.
 - Network requests run on a single background executor. Queue polling happens every three seconds while the activity is visible. Leaving the app stops heartbeats and pauses local playback. Another player can acquire the lease after 15 seconds.
 - The native activity exposes only player lifecycle events to a local HTML asset. The YouTube iframe remains visible with its controls. App client identity is provided through `loadDataWithBaseURL` using `https://com.tcdataconsultants.qbeat/`, following YouTube's documented WebView identity pattern. No video extraction or playback outside the official player is used.
 - Media playback does not require a WebView user gesture. Device-specific playback restrictions can still apply. Playback errors show their exact code and preserve the queue for retry or a manual skip.
-- Cleartext HTTP is allowed only for the existing backend IP on Android 7+. YouTube resources use HTTPS. Android 6 falls back to the manifest cleartext setting. A domain/HTTPS backend should replace the current IP for regular use.
+- The backend and YouTube resources use HTTPS. The manifest retains a legacy cleartext exception for the original backend IP, but version 1.2.0 makes its API calls to the secure port 8443 endpoint.
 - The native app keeps the display awake while visible. Back exits the video focus or prompts to leave; media play/pause controls the shared queue.
 
 ## Verification
@@ -48,6 +64,6 @@ node tests/test_native_player.cjs       # exercises the WebView lifecycle bridge
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-APK compilation/signature and automated bridge/API tests do not establish physical Firestick compatibility. The user has confirmed version 1.0.0 plays on their Firestick. Version 1.1.0's new controls and layout still need physical-device verification; no Android emulator was used.
+APK compilation/signature and automated bridge/API tests do not establish physical Firestick compatibility. The user has confirmed earlier versions play on their Firestick. Version 1.2.0's new controls and layout still need physical-device verification; no Android emulator was used.
 
 References: [Fire TV manifest support](https://developer.amazon.com/docs/fire-tv/add-tv-support-to-an-existing-react-native-project.html), [YouTube embedded player identity](https://developers.google.com/youtube/terms/required-minimum-functionality#api-client-identity-and-credentials).

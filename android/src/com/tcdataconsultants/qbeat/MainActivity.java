@@ -31,6 +31,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.FrameLayout;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -44,7 +45,7 @@ import java.util.concurrent.Executors;
 
 /** Native TV shell. Only the visible YouTube player uses a WebView. */
 public final class MainActivity extends Activity {
-    private static final String BASE = "http://89.167.98.40:8090";
+    private static final String BASE = "https://89.167.98.40:8443";
     private static final String PLAYER_ORIGIN = "https://com.tcdataconsultants.qbeat/";
     private static final int BG=0xff111014, PANEL=0xff1b1921, INK=0xfff2f0e9, MUTED=0xffaaa6af, LIME=0xffd6fa77, PURPLE=0xffb2a0ed;
     private final Handler ui=new Handler(Looper.getMainLooper());
@@ -62,6 +63,19 @@ public final class MainActivity extends Activity {
     private TextView comingNext;
     private ImageView guestPhoto;
     private String currentAvatar="";
+    private boolean compactMode=false,introductions=true,introducing=false;
+    private int introGeneration=0;
+    private String pickedName="Guest",pickedIcon="♫",sourceLabel="Shared room",loadedSource="";
+    private int pickedColor=LIME;
+    private FrameLayout screen;
+    private LinearLayout introOverlay,identityRow;
+    private ImageView introPhoto;
+    private TextView introIcon,introName,introSong;
+    private ImageView joinQr;
+    private String qrMode="";
+    private boolean countdownEnabled=false;
+    private int totalRemaining=0;
+    private TextView countdownView;
     private TextView title, subtitle, status, connection;
     private WebView video;
     private Button playButton, pauseButton;
@@ -74,6 +88,9 @@ public final class MainActivity extends Activity {
         prefs=getSharedPreferences("qbeat",MODE_PRIVATE);
         stageMode=prefs.getBoolean("stage",false);
         captionsEnabled=prefs.getBoolean("captions",false);
+        compactMode=prefs.getBoolean("compact",false);
+        introductions=prefs.getBoolean("introductions",true);
+        countdownEnabled=prefs.getBoolean("countdown",false);
         cookie=prefs.getString("session","");
         if(cookie.isEmpty()) showLogin(""); else {signedIn=true;showTV();}
     }
@@ -90,6 +107,7 @@ public final class MainActivity extends Activity {
     private void gap(LinearLayout parent,int height){View v=new View(this);parent.addView(v,new LinearLayout.LayoutParams(1,dp(height)));}
     private void showLogin(String error){
         connected=false;signedIn=false;ui.removeCallbacks(pollLoop);
+        introGeneration++;introducing=false;
         ytReady=false;currentId=-1;loadedId=-1;playbackFailed=false;
         if(video!=null){video.removeJavascriptInterface("Qbeat");video.destroy();video=null;}
         root=column();root.setBackgroundColor(BG);root.setPadding(dp(45),dp(22),dp(45),dp(22));root.setGravity(Gravity.CENTER);
@@ -119,9 +137,10 @@ public final class MainActivity extends Activity {
         });
         video.addJavascriptInterface(new PlayerBridge(),"Qbeat");
         left.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+        countdownView=text("",16,LIME);countdownView.setGravity(Gravity.RIGHT);countdownView.setPadding(dp(12),dp(5),dp(12),dp(5));countdownView.setVisibility(View.GONE);left.addView(countdownView,new LinearLayout.LayoutParams(-1,-2));
         comingNext=text("",16,LIME);comingNext.setPadding(dp(18),dp(11),dp(18),dp(11));comingNext.setBackgroundColor(0xff282234);comingNext.setMaxLines(2);comingNext.setVisibility(View.GONE);left.addView(comingNext);gap(left,10);
         title=text("The room is yours.",20,INK);title.setMaxLines(1);title.setEllipsize(android.text.TextUtils.TruncateAt.END);left.addView(title);
-        LinearLayout identity=row();guestPhoto=new ImageView(this);guestPhoto.setScaleType(ImageView.ScaleType.CENTER_CROP);guestPhoto.setVisibility(View.GONE);LinearLayout.LayoutParams avatarLp=new LinearLayout.LayoutParams(dp(26),dp(26));avatarLp.setMargins(0,0,dp(8),0);identity.addView(guestPhoto,avatarLp);subtitle=text("Scan the QR code and make the first pick.",11,MUTED);subtitle.setMaxLines(1);identity.addView(subtitle,new LinearLayout.LayoutParams(0,-2,1));left.addView(identity);gap(left,6);
+        LinearLayout identity=row();identityRow=identity;subtitle=text("Scan the QR code and make the first pick.",11,MUTED);subtitle.setMaxLines(2);identity.addView(subtitle,new LinearLayout.LayoutParams(0,-2,1));guestPhoto=new ImageView(this);guestPhoto.setScaleType(ImageView.ScaleType.CENTER_CROP);guestPhoto.setVisibility(View.GONE);LinearLayout.LayoutParams avatarLp=new LinearLayout.LayoutParams(dp(26),dp(26));avatarLp.setMargins(dp(8),0,0,0);identity.addView(guestPhoto,avatarLp);left.addView(identity);gap(left,6);
         status=text("Connect this TV to start playing the queue.",11,PURPLE);status.setMinHeight(dp(30));status.setMaxLines(2);left.addView(status);gap(left,4);
         LinearLayout controls=row();controlRow=controls;
         playButton=button("Connect player",()->{if(!connected){connected=true;poll(null);}else retry();});
@@ -130,12 +149,17 @@ public final class MainActivity extends Activity {
         for(Button b:new Button[]{playButton,pauseButton,skip,exit}){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(42));lp.setMargins(0,0,dp(9),0);controls.addView(b,lp);}left.addView(controls);
         LinearLayout right=column();rightColumn=right;right.setPadding(dp(23),dp(16),dp(14),dp(12));right.setBackground(shape(PANEL,0));LinearLayout.LayoutParams rightLp=new LinearLayout.LayoutParams(dp(225),-1);rightLp.setMargins(dp(22),0,0,0);body.addView(right,rightLp);
         TextView join=text("YOUR NEXT PICK STARTS HERE",9,LIME);right.addView(join);gap(right,8);right.addView(text("Scan. Pick. Play.",22,INK));gap(right,12);
-        ImageView qr=new ImageView(this);qr.setContentDescription("Scan to request a song at "+BASE);qr.setScaleType(ImageView.ScaleType.FIT_CENTER);right.addView(qr,new LinearLayout.LayoutParams(dp(150),dp(150)));gap(right,8);
+        ImageView qr=new ImageView(this);joinQr=qr;qrMode="";qr.setContentDescription("Scan to open Qbeat");qr.setScaleType(ImageView.ScaleType.FIT_CENTER);right.addView(qr,new LinearLayout.LayoutParams(dp(150),dp(150)));gap(right,8);
         right.addView(text("Open your phone camera to join.",10,MUTED));gap(right,14);right.addView(text("UP NEXT",10,PURPLE));gap(right,7);queueList=column();right.addView(queueList,new LinearLayout.LayoutParams(-1,0,1));
         TextView foot=text("Everyone gets a turn.  •  YouTube playback",9,MUTED);right.addView(foot);
-        setContentView(root);immersive();stageControls=true;applyStage();playButton.requestFocus();
+        screen=new FrameLayout(this);screen.setBackgroundColor(BG);screen.addView(root,new FrameLayout.LayoutParams(-1,-1));
+        introOverlay=column();introOverlay.setBackgroundColor(0xff201b2b);introOverlay.setGravity(Gravity.CENTER);introOverlay.setPadding(dp(40),dp(25),dp(40),dp(25));
+        introPhoto=new ImageView(this);introPhoto.setScaleType(ImageView.ScaleType.CENTER_CROP);introOverlay.addView(introPhoto,new LinearLayout.LayoutParams(dp(160),dp(160)));
+        introIcon=text("♫",100,LIME);introIcon.setGravity(Gravity.CENTER);introOverlay.addView(introIcon,new LinearLayout.LayoutParams(dp(160),dp(160)));gap(introOverlay,15);
+        introName=text("",32,LIME);introName.setGravity(Gravity.CENTER);introOverlay.addView(introName);gap(introOverlay,10);introSong=text("",17,MUTED);introSong.setGravity(Gravity.CENTER);introOverlay.addView(introSong);introOverlay.setVisibility(View.GONE);screen.addView(introOverlay,new FrameLayout.LayoutParams(-1,-1));
+        setContentView(screen);immersive();stageControls=true;applyStage();playButton.requestFocus();
         try(InputStream in=getAssets().open("player.html")){video.loadDataWithBaseURL(PLAYER_ORIGIN,new String(readAll(in),StandardCharsets.UTF_8),"text/html","UTF-8",null);}catch(Exception e){status.setText("Player files are missing. Reinstall the app.");}
-        network.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(BASE+"/qr.png").openConnection();c.setConnectTimeout(8000);c.setReadTimeout(8000);Bitmap image;try(InputStream in=c.getInputStream()){image=BitmapFactory.decodeStream(in);}finally{c.disconnect();}ui.post(()->qr.setImageBitmap(image));}catch(Exception e){ui.post(()->qr.setContentDescription("Guest page: "+BASE));}});
+        updateQr("shared");
         poll(null);
     }
     private String safeMessage(Exception e){String s=e.getMessage();return s==null?"Connection failed. Please try again.":s;}
@@ -154,68 +178,104 @@ public final class MainActivity extends Activity {
         polling=true;ui.removeCallbacks(pollLoop);final boolean claim=connected;
         network.execute(()->{try{
             if(claim){JSONObject body=extra==null?new JSONObject():extra;body.put("client",client);call("host/player",body);}
-            JSONObject state=call("state",null);
+            JSONObject state=call("host/tv/state",null);
             ui.post(()->{polling=false;if(!foreground||!signedIn)return;if(!state.optBoolean("host")){cookie="";prefs.edit().remove("session").apply();showLogin("Your host session expired. Sign in again.");return;}render(state);ui.postDelayed(pollLoop,3000);});
         }catch(Exception e){ui.post(()->{polling=false;if(!foreground||!signedIn)return;connected=false;if(video!=null)video.evaluateJavascript("setPaused(true)",null);connection.setText("○ Disconnected");status.setText(safeMessage(e));playButton.setText("Reconnect");ui.postDelayed(pollLoop,5000);});}});
     }
     private void render(JSONObject state){
+        JSONObject source=state.optJSONObject("source");sourceLabel=source==null?"Shared room":source.optString("label","Shared room");String sourceKey=source==null?"shared":source.optString("mode")+":"+source.optInt("playlist_id",0);
+        if(!sourceKey.equals(loadedSource)){loadedSource=sourceKey;loadedId=-1;cancelIntro();}updateQr(source==null?"shared":source.optString("mode","shared"));
         paused=state.optBoolean("paused");pauseButton.setText(paused?"Resume  ▶":"Pause  Ⅱ");connection.setText(connected?(paused?"● Paused":"● Player connected"):"○ Ready to connect");connection.setTextColor(connected?LIME:MUTED);
         JSONObject song=state.optJSONObject("now");long next=song==null?-1:song.optLong("id",-1);String vid=song==null?"":song.optString("video_id");
         currentId=next;currentVideo=vid;
-        title.setText(song==null?"The room is yours.":song.optString("title"));
-        if(song==null){subtitle.setText("Scan the QR code and make the first pick.");}else{String prefix=song.optString("artist")+"  ·  "+song.optString("guest_icon","♫")+" ";String who=song.optString("guest");SpannableString line=new SpannableString(prefix+who);line.setSpan(new ForegroundColorSpan(guestColor(song)),prefix.length(),line.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);subtitle.setText(line);}
+        title.setText(song==null?"The room is yours.":song.optString("display_title",song.optString("title")));
+        if(song==null){subtitle.setText("Scan the QR code and make the first pick.");}else{String prefix=song.optString("display_artist",song.optString("artist"))+"  ·  Picked by ";String who=song.optString("guest");SpannableString line=new SpannableString(prefix+who+" "+song.optString("guest_icon","♫"));line.setSpan(new ForegroundColorSpan(guestColor(song)),prefix.length(),prefix.length()+who.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);subtitle.setText(line);pickedName=who;pickedIcon=song.optString("guest_icon","♫");pickedColor=guestColor(song);}
         loadGuestPhoto(song==null?"":song.optString("guest_photo",""));
-        JSONArray queue=state.optJSONArray("queue");nextTitle=queue!=null&&queue.length()>0?queue.optJSONObject(0).optString("title"):"";queueList.removeAllViews();if(queue==null||queue.length()==0)queueList.addView(text("Your next great pick goes here.",11,MUTED));else for(int i=0;i<Math.min(3,queue.length());i++){JSONObject s=queue.optJSONObject(i);TextView item=text((i+1)+"  "+s.optString("title"),12,INK);item.setMaxLines(2);item.setEllipsize(android.text.TextUtils.TruncateAt.END);queueList.addView(item);TextView guest=text(s.optString("guest_icon","♫")+" "+s.optString("guest"),10,guestColor(s));guest.setMaxLines(1);queueList.addView(guest);gap(queueList,7);}
+        JSONArray queue=state.optJSONArray("queue");nextTitle=queue!=null&&queue.length()>0?queue.optJSONObject(0).optString("display_title",queue.optJSONObject(0).optString("title")):"";queueList.removeAllViews();if(queue==null||queue.length()==0)queueList.addView(text("Your next great pick goes here.",11,MUTED));else for(int i=0;i<Math.min(3,queue.length());i++){JSONObject s=queue.optJSONObject(i);TextView item=text((i+1)+"  "+s.optString("display_title",s.optString("title")),12,INK);item.setMaxLines(2);item.setEllipsize(android.text.TextUtils.TruncateAt.END);queueList.addView(item);TextView guest=text(s.optString("guest")+" "+s.optString("guest_icon","♫"),10,guestColor(s));guest.setMaxLines(1);queueList.addView(guest);gap(queueList,7);}
         if(connected&&ytReady){
-            if(next!=loadedId){loadedId=next;secondsRemaining=0;playbackFailed=false;updateNext();if(next<0){video.evaluateJavascript("idle()",null);status.setText("Connected. Waiting for the next pick.");}else{loadVideo();status.setText("Loading your next pick…");}}
-            else if(next>=0&&!playbackFailed)video.evaluateJavascript("setPaused("+paused+")",null);
+            if(next!=loadedId){cancelIntro();loadedId=next;secondsRemaining=0;totalRemaining=0;playbackFailed=false;updateNext();updateCountdown();if(next<0){video.evaluateJavascript("idle()",null);status.setText("Connected. Waiting for the next pick.");}else{loadVideo();status.setText("Loading your next pick…");}}
+            else if(next>=0&&!playbackFailed&&!introducing)video.evaluateJavascript("setPaused("+paused+")",null);
             if(!playbackFailed)playButton.setText("Retry track");
         }
         updateNext();
+        updateCountdown();
     }
-    private void loadVideo(){if(currentId>=0&&ytReady){video.evaluateJavascript("setCaptions("+captionsEnabled+")",null);video.evaluateJavascript("loadTrack("+JSONObject.quote(currentVideo)+","+paused+")",null);}}
+    private void loadVideo(){if(currentId<0||!ytReady)return;if(introductions&&!paused){startIntro();}else loadVideoNow();}
+    private void updateQr(String mode){if(mode.equals(qrMode)||joinQr==null)return;qrMode=mode;String path=mode.equals("personal")?"/qr.png?target=personal":"/qr.png";network.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(BASE+path).openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);Bitmap image;try(InputStream in=c.getInputStream()){image=BitmapFactory.decodeStream(in);}finally{c.disconnect();}ui.post(()->{if(mode.equals(qrMode))joinQr.setImageBitmap(image);});}catch(Exception ignored){}});}
+    private void loadVideoNow(){if(currentId>=0&&ytReady&&foreground&&connected){video.evaluateJavascript("setCaptions("+captionsEnabled+")",null);video.evaluateJavascript("loadTrack("+JSONObject.quote(currentVideo)+","+paused+")",null);}}
+    private void cancelIntro(){introGeneration++;introducing=false;if(introOverlay!=null){introOverlay.animate().cancel();introOverlay.setVisibility(View.GONE);}if(root!=null)root.setVisibility(View.VISIBLE);}
+    private void startIntro(){
+        cancelIntro();introducing=true;final int generation=introGeneration;final long track=currentId;
+        video.evaluateJavascript("setPaused(true)",null);root.setVisibility(View.GONE);introOverlay.setVisibility(View.VISIBLE);introName.setText("Picked by "+pickedName+" "+pickedIcon);introName.setTextColor(pickedColor);introSong.setText(title.getText());
+        introPhoto.setImageDrawable(guestPhoto.getDrawable());introPhoto.setVisibility(guestPhoto.getDrawable()!=null&&!currentAvatar.isEmpty()?View.VISIBLE:View.GONE);introIcon.setText(pickedIcon);introIcon.setVisibility(introPhoto.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);
+        introOverlay.setTranslationX(getResources().getDisplayMetrics().widthPixels);introOverlay.setAlpha(0f);
+        introOverlay.animate().translationX(0).alpha(1f).setDuration(300).withEndAction(()->ui.postDelayed(()->{
+            if(generation!=introGeneration||!foreground||track!=currentId)return;
+            introOverlay.animate().translationX(-getResources().getDisplayMetrics().widthPixels).alpha(0f).setDuration(300).withEndAction(()->{
+                if(generation!=introGeneration)return;introducing=false;introOverlay.setVisibility(View.GONE);root.setVisibility(View.VISIBLE);loadVideoNow();
+            }).start();
+        },1400)).start();
+    }
     private int guestColor(JSONObject song){try{return Color.parseColor(song.optString("guest_color","#d6fa77"));}catch(Exception e){return LIME;}}
     private void loadGuestPhoto(String path){
-        if(path.equals(currentAvatar))return;currentAvatar=path;guestPhoto.setVisibility(View.GONE);
+        if(path.equals(currentAvatar))return;currentAvatar=path;guestPhoto.setVisibility(View.GONE);guestPhoto.setImageDrawable(null);
         if(!path.matches("/avatars/[a-f0-9]{32}\\.jpg"))return;
-        network.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(BASE+path).openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);Bitmap image;try(InputStream in=c.getInputStream()){image=BitmapFactory.decodeStream(in);}finally{c.disconnect();}ui.post(()->{if(path.equals(currentAvatar)&&image!=null){guestPhoto.setImageBitmap(image);guestPhoto.setVisibility(View.VISIBLE);}});}catch(Exception ignored){}});
+        network.execute(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(BASE+path).openConnection();c.setConnectTimeout(5000);c.setReadTimeout(5000);Bitmap image;try(InputStream in=c.getInputStream()){image=BitmapFactory.decodeStream(in);}finally{c.disconnect();}ui.post(()->{if(path.equals(currentAvatar)&&image!=null){guestPhoto.setImageBitmap(image);guestPhoto.setVisibility(View.VISIBLE);if(introducing){introPhoto.setImageBitmap(image);introPhoto.setVisibility(View.VISIBLE);introIcon.setVisibility(View.GONE);}}});}catch(Exception ignored){}});
     }
-    private void showMore(){new AlertDialog.Builder(this).setTitle("Qbeat · TV settings").setItems(new String[]{stageMode?"Exit fullscreen TV mode":"Fullscreen TV mode",captionsEnabled?"Turn subtitles off":"Turn subtitles on","Sign out"},(d,which)->{
-        if(which==0){stageMode=!stageMode;stageControls=false;prefs.edit().putBoolean("stage",stageMode).apply();applyStage();if(stageMode)video.requestFocus();else playButton.requestFocus();}
-        if(which==1){captionsEnabled=!captionsEnabled;prefs.edit().putBoolean("captions",captionsEnabled).apply();video.evaluateJavascript("setCaptions("+captionsEnabled+")",null);status.setText(captionsEnabled?"Subtitles on when available.":"Subtitles off. Text built into the video cannot be removed.");}
-        if(which==2)confirmSignOut();
+    private void showMore(){new AlertDialog.Builder(this).setTitle("Qbeat · "+sourceLabel).setItems(new String[]{"Music source / accounts",stageMode?"Exit fullscreen TV mode":"Fullscreen TV mode",compactMode?"Standard video size":"Compact player",captionsEnabled?"Turn subtitles off":"Turn subtitles on",introductions?"Turn picked-by introductions off":"Turn picked-by introductions on",countdownEnabled?"Turn countdown off":"Turn countdown on","Sign out"},(d,which)->{
+        if(which==0)chooseMusicSource();
+        if(which==1){stageMode=!stageMode;stageControls=false;prefs.edit().putBoolean("stage",stageMode).apply();applyStage();if(stageMode)video.requestFocus();else playButton.requestFocus();}
+        if(which==2){compactMode=!compactMode;prefs.edit().putBoolean("compact",compactMode).apply();applyStage();}
+        if(which==3){captionsEnabled=!captionsEnabled;prefs.edit().putBoolean("captions",captionsEnabled).apply();video.evaluateJavascript("setCaptions("+captionsEnabled+")",null);status.setText(captionsEnabled?"Subtitles on when available.":"Subtitles off. Text built into the video cannot be removed.");}
+        if(which==4){introductions=!introductions;prefs.edit().putBoolean("introductions",introductions).apply();}
+        if(which==5){countdownEnabled=!countdownEnabled;prefs.edit().putBoolean("countdown",countdownEnabled).apply();updateCountdown();}
+        if(which==6)confirmSignOut();
     }).show();}
+    private void chooseMusicSource(){network.execute(()->{try{JSONArray accounts=call("host/tv/accounts",null).getJSONArray("accounts");ui.post(()->{
+        String[] options=new String[accounts.length()+2];options[0]="Shared room queue";options[1]="Link an account";for(int i=0;i<accounts.length();i++)options[i+2]=accounts.optJSONObject(i).optString("display_name")+" (@"+accounts.optJSONObject(i).optString("username")+")";
+        new AlertDialog.Builder(this).setTitle("Whose music?").setItems(options,(d,index)->{if(index==0)changeSource(-1);else if(index==1)showPairCode();else choosePlaylist(accounts.optJSONObject(index-2).optInt("id"),options[index]);}).show();
+    });}catch(Exception e){ui.post(()->status.setText(safeMessage(e)));}});}
+    private void showPairCode(){network.execute(()->{try{JSONObject pair=call("host/tv/pair",new JSONObject());ui.post(()->new AlertDialog.Builder(this).setTitle("TV code: "+pair.optString("code")).setMessage("On your phone, open "+BASE+"/personal, sign in, and select Link to TV. Enter this code within 10 minutes. Then reopen Music source on this TV to choose the account.").setPositiveButton("Done",(d,w)->chooseMusicSource()).show());}catch(Exception e){ui.post(()->status.setText(safeMessage(e)));}});}
+    private void choosePlaylist(int accountId,String name){network.execute(()->{try{JSONArray list=call("host/tv/accounts/"+accountId+"/playlists",null).getJSONArray("playlists");ui.post(()->{
+        if(list.length()==0){new AlertDialog.Builder(this).setTitle(name).setMessage("Create a playlist on your phone first.").setPositiveButton("OK",null).show();return;}
+        String[] labels=new String[list.length()];for(int i=0;i<list.length();i++){JSONObject p=list.optJSONObject(i);labels[i]=p.optString("name")+" · "+p.optInt("tracks")+" tracks";}
+        new AlertDialog.Builder(this).setTitle(name+"’s playlists").setItems(labels,(d,index)->changeSource(list.optJSONObject(index).optInt("id"))).show();
+    });}catch(Exception e){ui.post(()->status.setText(safeMessage(e)));}});}
+    private void changeSource(int playlistId){network.execute(()->{try{JSONObject body=new JSONObject().put("mode",playlistId<0?"shared":"personal");if(playlistId>=0)body.put("playlist_id",playlistId);call("host/tv/source",body);ui.post(()->{cancelIntro();video.evaluateJavascript("idle()",null);connected=true;loadedId=-1;currentId=-1;currentVideo="";playbackFailed=false;poll(null);});}catch(Exception e){ui.post(()->status.setText(safeMessage(e)));}});}
     private void applyStage(){
         if(root==null||leftColumn==null)return;
         root.setPadding(stageMode?0:dp(32),stageMode?0:dp(20),stageMode?0:dp(32),stageMode?0:dp(20));
         for(int i=0;i<root.getChildCount();i++){View child=root.getChildAt(i);child.setVisibility(!stageMode||child==bodyRow?View.VISIBLE:View.GONE);}
         rightColumn.setVisibility(stageMode?View.GONE:View.VISIBLE);
+        LinearLayout.LayoutParams videoSize=compactMode?new LinearLayout.LayoutParams(dp(356),dp(200)):new LinearLayout.LayoutParams(-1,0,1);videoSize.gravity=Gravity.CENTER_HORIZONTAL;video.setLayoutParams(videoSize);leftColumn.setGravity(compactMode?Gravity.CENTER_VERTICAL:Gravity.TOP);title.setTextSize(compactMode?30:20);title.setMaxLines(compactMode?2:1);subtitle.setTextSize(compactMode?15:11);
         for(int i=0;i<leftColumn.getChildCount();i++){
-            View child=leftColumn.getChildAt(i);if(child==comingNext)continue;
-            child.setVisibility(!stageMode||child==video||(stageControls&&(child==controlRow||child==status))?View.VISIBLE:View.GONE);
+            View child=leftColumn.getChildAt(i);if(child==comingNext||child==countdownView)continue;
+            child.setVisibility(!stageMode||child==video||(compactMode&&(child==title||child==identityRow))||(stageControls&&(child==controlRow||child==status))?View.VISIBLE:View.GONE);
         }
-        updateNext();immersive();
+        updateNext();updateCountdown();immersive();
     }
     private void updateNext(){if(comingNext==null)return;boolean show=connected&&!playbackFailed&&secondsRemaining>0&&secondsRemaining<=10&&!nextTitle.isEmpty();comingNext.setVisibility(show?View.VISIBLE:View.GONE);if(show)comingNext.setText("COMING NEXT  ·  "+nextTitle+"  ·  in "+secondsRemaining+"s");}
+    private void updateCountdown(){if(countdownView==null)return;boolean show=countdownEnabled&&connected&&!introducing&&!playbackFailed&&currentId>=0&&totalRemaining>0;countdownView.setVisibility(show?View.VISIBLE:View.GONE);if(show){int hours=totalRemaining/3600,minutes=(totalRemaining%3600)/60,seconds=totalRemaining%60;String value=hours>0?String.format(java.util.Locale.US,"%d:%02d:%02d",hours,minutes,seconds):String.format(java.util.Locale.US,"%d:%02d",minutes,seconds);countdownView.setText("Time left  "+value);}}
     private void revealControls(){if(stageMode){stageControls=true;applyStage();playButton.requestFocus();}}
     private void retry(){playbackFailed=false;loadedId=-1;status.setText("Retrying this track…");poll(null);}
     private void control(String action){if(!signedIn)return;network.execute(()->{try{call("host/control",new JSONObject().put("action",action));ui.post(()->poll(null));}catch(Exception e){ui.post(()->status.setText(safeMessage(e)));}});}
     private void confirmSignOut(){new AlertDialog.Builder(this).setTitle("Disconnect this TV?").setMessage("The music stops on this screen. Guests can still add songs.").setNegativeButton("Keep playing",null).setPositiveButton("Sign out",(d,w)->{connected=false;signedIn=false;cookie="";prefs.edit().remove("session").apply();ui.removeCallbacks(pollLoop);if(video!=null){video.removeJavascriptInterface("Qbeat");video.destroy();video=null;}showLogin("");}).show();}
     public final class PlayerBridge {
-        @JavascriptInterface public void progress(String vid,double elapsed,double duration){ui.post(()->{if(!foreground||!vid.equals(currentVideo)||Double.isNaN(duration)||Double.isInfinite(duration)||Double.isNaN(elapsed)||Double.isInfinite(elapsed))return;double left=duration-elapsed;secondsRemaining=duration>0&&left>0&&left<=10?(int)Math.ceil(left):0;updateNext();});}
+        @JavascriptInterface public void progress(String vid,double elapsed,double duration){ui.post(()->{if(!foreground||introducing||!vid.equals(currentVideo)||Double.isNaN(duration)||Double.isInfinite(duration)||Double.isNaN(elapsed)||Double.isInfinite(elapsed))return;double left=duration-elapsed;totalRemaining=duration>0&&left>0?(int)Math.ceil(left):0;secondsRemaining=duration>0&&left>0&&left<=10?(int)Math.ceil(left):0;updateNext();updateCountdown();});}
         @JavascriptInterface public void ready(){ui.post(()->{ytReady=true;loadedId=-1;if(signedIn){status.setText("YouTube player ready. Connect this TV to begin.");poll(null);}});}
-        @JavascriptInterface public void ended(String vid){ui.post(()->{if(!connected||playbackFailed||!vid.equals(currentVideo))return;try{poll(new JSONObject().put("ended",currentId));}catch(Exception ignored){}});}
-        @JavascriptInterface public void playing(){ui.post(()->{playbackFailed=false;if(stageMode&&stageControls){stageControls=false;applyStage();}if(status!=null)status.setText("Now playing. The next song starts automatically.");});}
+        @JavascriptInterface public void ended(String vid){ui.post(()->{if(!connected||introducing||playbackFailed||!vid.equals(currentVideo))return;try{poll(new JSONObject().put("ended",currentId));}catch(Exception ignored){}});}
+        @JavascriptInterface public void playing(){ui.post(()->{if(introducing)return;playbackFailed=false;if(stageMode&&stageControls){stageControls=false;applyStage();}if(status!=null)status.setText("Now playing · "+sourceLabel);});}
         @JavascriptInterface public void blocked(){ui.post(()->{playbackFailed=true;revealControls();status.setText("Press Play inside the video, or select Retry track to enable sound.");playButton.setText("Enable sound");});}
         @JavascriptInterface public void loadFailed(){ui.post(()->{playbackFailed=true;status.setText("YouTube could not load. Check the connection and reopen Qbeat.");});}
         @JavascriptInterface public void error(int code){ui.post(()->{
-            playbackFailed=true;revealControls();updateNext();String reason;
+            if(introducing)return;
+            playbackFailed=true;revealControls();updateNext();updateCountdown();String reason;
             switch(code){case 2:reason="YouTube rejected this video request.";break;case 5:reason="This device could not play this video.";break;case 100:reason="This video is unavailable or private.";break;case 101:case 150:reason="YouTube blocked this video in the embedded player.";break;case 153:reason="YouTube could not identify this player.";break;default:reason="YouTube playback failed.";}
             status.setText("YouTube error "+code+": "+reason+" Retry or skip; your queue is preserved.");playButton.setText("Retry track");try{poll(new JSONObject().put("error_code",code).put("song_id",currentId));}catch(Exception ignored){}
         });}
     }
     @Override protected void onResume(){super.onResume();foreground=true;immersive();if(video!=null)video.onResume();if(signedIn)poll(null);}
-    @Override protected void onPause(){foreground=false;ui.removeCallbacks(pollLoop);if(video!=null){video.evaluateJavascript("setPaused(true)",null);video.onPause();}super.onPause();}
+    @Override protected void onPause(){foreground=false;cancelIntro();loadedId=-1;ui.removeCallbacks(pollLoop);if(video!=null){video.evaluateJavascript("setPaused(true)",null);video.onPause();}super.onPause();}
     @Override protected void onDestroy(){foreground=false;ui.removeCallbacksAndMessages(null);if(video!=null){video.removeJavascriptInterface("Qbeat");video.destroy();video=null;}network.shutdownNow();super.onDestroy();}
     @Override public boolean onKeyDown(int code,KeyEvent event){
         if(signedIn&&event.getRepeatCount()==0&&code==KeyEvent.KEYCODE_MENU){if(stageMode){stageControls=!stageControls;applyStage();if(stageControls)playButton.requestFocus();else video.requestFocus();}else showMore();return true;}

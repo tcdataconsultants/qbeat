@@ -4,6 +4,9 @@ const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<
 let state, toastTimer, searchSerial = 0, player, ready = false, started = false, busy = false, loadedId = null;
 let blocked = false;
 let captionsEnabled = false;
+let introTimer, introId=null;
+let countdownEnabled=false;
+try{countdownEnabled=localStorage.getItem('qbeat-countdown')==='1';}catch(_){}
 let profile = {name:'',color:'#d6fa77',icon:'♫',photo:null};
 const client = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2,'0')).join('');
 const thumb = vid => 'https://i.ytimg.com/vi/' + encodeURIComponent(vid) + '/mqdefault.jpg';
@@ -21,7 +24,8 @@ function toast(message) { $('toast').textContent = message; $('toast').hidden = 
 function row(song, index, result = false) {
   const color=/^#[a-f0-9]{6}$/i.test(song.guest_color||'')?song.guest_color:'#d6fa77';
   const avatar=song.guest_photo&&/^\/avatars\/[a-f0-9]{32}\.jpg$/.test(song.guest_photo)?`<img class="guest-avatar tiny" src="${song.guest_photo}" alt="" loading="lazy">`:`<span class="guest-avatar tiny">${esc(song.guest_icon||'♫')}</span>`;
-  return `<div class="track">${result ? '' : `<span class="number">${String(index+1).padStart(2,'0')}</span>`}<img src="${thumb(song.video_id)}" alt="" loading="lazy"><div class="info"><h3>${esc(song.title)}</h3><p>${esc(song.artist)}</p>${result?'':`<p class="picked-by">${avatar}<span>Picked by <strong style="color:${color}">${esc(song.guest)}</strong></span></p>`}</div>${result ? `<button data-add="${esc(song.video_id)}" ${state && !state.accepting ? 'disabled' : ''}>+ Add</button>` : state?.host && mode === 'host' ? `<button class="text-button" data-remove="${song.id}" aria-label="Remove ${esc(song.title)}">Remove</button>` : ''}</div>`;
+  const length=result?`<span class="track-duration" aria-label="Video length">${esc(song.duration_label||'Length unavailable')}</span>`:'';
+  return `<div class="track">${result ? '' : `<span class="number">${String(index+1).padStart(2,'0')}</span>`}<img src="${thumb(song.video_id)}" alt="" loading="lazy"><div class="info"><h3>${esc(result?song.title:(song.display_title||song.title))}</h3><p>${esc(result?song.artist:(song.display_artist||song.artist))}</p>${length}${result?'':`<p class="picked-by"><span>Picked by <strong style="color:${color}">${esc(song.guest)}</strong></span>${avatar}</p>`}</div>${result ? `<button data-add="${esc(song.video_id)}" ${state && !state.accepting ? 'disabled' : ''}>+ Add</button>` : state?.host && mode === 'host' ? `<button class="text-button" data-remove="${song.id}" aria-label="Remove ${esc(song.title)}">Remove</button>` : ''}</div>`;
 }
 function render() {
   const needsLogin = mode !== 'guest' && !state.host;
@@ -31,10 +35,10 @@ function render() {
   if (mode === 'player') $('headline').innerHTML = 'The room is <span>listening.</span>';
   $('queue-count').textContent = state.queue.length;
   $('queue').innerHTML = state.queue.length ? state.queue.map((s,i) => row(s,i)).join('') : '<div class="empty">No songs waiting. There’s room for your next great pick.</div>';
-  $('now-title').textContent = state.now?.title || 'The room is yours.';
+  $('now-title').textContent = state.now?.display_title || state.now?.title || 'The room is yours.';
   document.body.classList.toggle('has-track', !!state.now);
   const nowColor=/^#[a-f0-9]{6}$/i.test(state.now?.guest_color||'')?state.now.guest_color:'#d6fa77';
-  $('now-artist').innerHTML = state.now ? `${esc(state.now.artist)} · ${esc(state.now.guest_icon||'♫')} Picked by <strong style="color:${nowColor}">${esc(state.now.guest)}</strong>` : 'Add the first song to get things going.';
+  $('now-artist').innerHTML = state.now ? `${esc(state.now.display_artist||state.now.artist)} · Picked by <strong style="color:${nowColor}">${esc(state.now.guest)}</strong> ${esc(state.now.guest_icon||'♫')}` : 'Add the first song to get things going.';
   $('now-art').hidden = !state.now;
   if (state.now) $('now-art').src = thumb(state.now.video_id);
   $('player-status').textContent = state.player_online ? (state.paused ? '● Player paused' : '● Player connected') : '○ Player offline';
@@ -51,7 +55,7 @@ $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('log
 $('search-form').onsubmit = async e => {
   e.preventDefault(); const serial = ++searchSerial;
   $('welcome').hidden = true; $('results').innerHTML=''; $('search-status').textContent='Looking on YouTube…';
-  try { const data = await api('search?q='+encodeURIComponent($('search').value)); if(serial !== searchSerial) return; $('results').innerHTML = data.results.map((s,i)=>row(s,i,true)).join(''); $('search-status').textContent = data.results.length ? `${data.results.length} ${data.results.length === 1 ? 'track' : 'tracks'} found on YouTube` : 'No tracks found. Try another artist or song.'; } catch(e) { if(serial === searchSerial) $('search-status').textContent=e.message; }
+  try { const data = await api('search?q='+encodeURIComponent($('search').value)+($('karaoke-search').checked?'&karaoke=1':'')); if(serial !== searchSerial) return; $('results').innerHTML = data.results.map((s,i)=>row(s,i,true)).join(''); $('search-status').textContent = data.results.length ? `${data.results.length} ${data.results.length === 1 ? 'track' : 'tracks'} found on YouTube` : 'No tracks found. Try another artist or song.'; } catch(e) { if(serial === searchSerial) $('search-status').textContent=e.message; }
 };
 $('results').onclick = async e => {
   const button=e.target.closest('[data-add]'); if(!button) return;
@@ -108,6 +112,12 @@ $('tv-mode').onclick = () => {
   $('tv-mode').textContent=enabled?'Exit TV mode':'TV mode ⛶';
   if(enabled) document.documentElement.requestFullscreen?.().catch(()=>{});
 };
+$('compact-player').onclick=()=>{const enabled=document.body.classList.toggle('compact-view');$('compact-player').setAttribute('aria-pressed',enabled);$('compact-player').textContent=enabled?'Standard player':'Compact player';};
+function countdownButton(){$('countdown-toggle').textContent='Countdown: '+(countdownEnabled?'on':'off');$('countdown-toggle').setAttribute('aria-pressed',countdownEnabled);}
+countdownButton();
+$('countdown-toggle').onclick=()=>{countdownEnabled=!countdownEnabled;try{localStorage.setItem('qbeat-countdown',countdownEnabled?'1':'0');}catch(_){}countdownButton();updateCountdown();};
+function updateCountdown(){const node=$('video-countdown');if(!countdownEnabled||mode!=='player'||!ready||!started||blocked||introId!==null||!state?.now||loadedId!==state.now.id||!player.getDuration||!player.getCurrentTime){node.hidden=true;return;}const remaining=player.getDuration()-player.getCurrentTime();if(!Number.isFinite(remaining)||remaining<=0){node.hidden=true;return;}const total=Math.ceil(remaining),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;node.textContent='Time left  '+(h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s).padStart(2,'0');node.hidden=false;}
+setInterval(updateCountdown,500);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.body.classList.remove('tv-stage');});
 function applyCaptions() {
   if(!ready || !player.getOptions) return;
@@ -118,16 +128,17 @@ function applyCaptions() {
 $('captions').onclick=()=>{captionsEnabled=!captionsEnabled;applyCaptions();$('captions').textContent='Subtitles: '+(captionsEnabled?'on':'off');$('captions').setAttribute('aria-pressed',captionsEnabled);};
 function updateComingNext() {
   const strip=$('coming-next');
-  if(mode!=='player' || !ready || !started || blocked || !state?.now || loadedId!==state.now.id || !state.queue.length || !player.getDuration || !player.getCurrentTime) {strip.hidden=true;return;}
+  if(mode!=='player' || !ready || !started || blocked || introId!==null || !state?.now || loadedId!==state.now.id || !state.queue.length || !player.getDuration || !player.getCurrentTime) {strip.hidden=true;return;}
   const duration=player.getDuration(), elapsed=player.getCurrentTime(), remaining=duration-elapsed;
   const visible=Number.isFinite(remaining) && duration>0 && remaining>0 && remaining<=10;
   strip.hidden=!visible;
-  if(visible) strip.textContent=`COMING NEXT · ${state.queue[0].title} · in ${Math.ceil(remaining)}s`;
+  if(visible) strip.textContent=`COMING NEXT · ${state.queue[0].display_title||state.queue[0].title} · in ${Math.ceil(remaining)}s`;
 }
 setInterval(updateComingNext,500);
 
 function stopLocal(message) {
   started=false; loadedId=null;
+  clearTimeout(introTimer);introId=null;$('track-intro').hidden=true;document.querySelector('.video-box').hidden=false;
   if(ready) player.stopVideo();
   $('start-player').textContent='Reconnect player ▶'; $('start-player').disabled=false;
   $('player-message').textContent=message;
@@ -141,20 +152,29 @@ async function finishTrack(endedId = loadedId) {
 }
 function syncPlayer() {
   if(!ready || !started || !state) return;
-  if(!state.now) { if(loadedId !== null) player.stopVideo(); loadedId=null; return; }
+  if(!state.now) { clearTimeout(introTimer);introId=null;$('track-intro').hidden=true;document.querySelector('.video-box').hidden=false;if(loadedId !== null) player.stopVideo(); loadedId=null; return; }
   if(loadedId !== state.now.id) {
-    loadedId=state.now.id; blocked=false;
-    if(state.paused) player.cueVideoById(state.now.video_id); else player.loadVideoById(state.now.video_id);
+    loadedId=state.now.id; blocked=false;clearTimeout(introTimer);introId=loadedId;
+    player.pauseVideo();document.querySelector('.video-box').hidden=true;$('track-intro').hidden=false;
+    $('intro-name').textContent='Picked by '+state.now.guest+' '+(state.now.guest_icon||'♫');
+    $('intro-name').style.color=/^#[a-f0-9]{6}$/i.test(state.now.guest_color||'')?state.now.guest_color:'#d6fa77';
+    $('intro-track').textContent=(state.now.display_artist||state.now.artist)+' · '+(state.now.display_title||state.now.title);
+    $('intro-avatar').innerHTML=state.now.guest_photo&&/^\/avatars\/[a-f0-9]{32}\.jpg$/.test(state.now.guest_photo)?`<img src="${state.now.guest_photo}" alt="">`:esc(state.now.guest_icon||'♫');
+    const slide=$('intro-slide');slide.style.animation='none';void slide.offsetWidth;slide.style.animation='';
+    const expected=loadedId;
+    introTimer=setTimeout(()=>{if(!started||state.now?.id!==expected)return;introId=null;$('track-intro').hidden=true;document.querySelector('.video-box').hidden=false;if(state.paused)player.cueVideoById(state.now.video_id);else player.loadVideoById(state.now.video_id);},2000);
+  } else if(introId!==null) {return;
   } else if(state.paused && player.getPlayerState() === 1) player.pauseVideo();
   else if(!state.paused && !blocked && [2,5].includes(player.getPlayerState())) player.playVideo();
 }
 window.onYouTubeIframeAPIReady = () => {
   player = new YT.Player('youtube', {width:'100%',height:'100%',playerVars:{playsinline:1,origin:location.origin,cc_load_policy:0,iv_load_policy:3,rel:0},events:{
     onReady:()=>{ ready=true; $('player-message').textContent='Player ready. If sound is blocked, press Play in the video.'; tick(); },
-    onStateChange:e=>{if(e.data === YT.PlayerState.ENDED) finishTrack(); if(e.data === YT.PlayerState.PLAYING){blocked=false;applyCaptions(); $('player-message').textContent='Connected. The next song plays automatically.';}},
+    onStateChange:e=>{if(e.data === YT.PlayerState.ENDED&&introId===null) finishTrack(); if(e.data === YT.PlayerState.PLAYING&&introId===null){blocked=false;applyCaptions(); $('player-message').textContent='Connected. The next song plays automatically.';}},
     onApiChange:applyCaptions,
     onAutoplayBlocked:()=>{blocked=true;$('player-message').textContent='Press Play inside the YouTube video to enable sound.'; $('start-player').disabled=false; $('start-player').textContent='Enable sound ▶';},
     onError:e=>{
+      if(introId!==null)return;
       blocked=true;
       const messages={2:'YouTube rejected this video request.',5:'This device could not play the video.',100:'This video is private or unavailable.',101:'YouTube has blocked this video in the embedded player.',150:'YouTube has blocked this video in the embedded player.',153:'YouTube could not identify this player. The browser may be blocking its referrer.'};
       $('player-message').textContent=`YouTube error ${e.data}: ${messages[e.data] || 'Playback failed.'} The queue is preserved. Retry or skip this track.`;

@@ -1,0 +1,7 @@
+[Unit]
+Description=Renew Qbeat IP TLS certificate
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/qbeat-certbot/bin/certbot renew --quiet --config-dir /etc/letsencrypt-qbeat --work-dir /var/lib/letsencrypt-qbeat --logs-dir /var/log/letsencrypt-qbeat --deploy-hook /usr/local/sbin/qbeat-reload-tls
