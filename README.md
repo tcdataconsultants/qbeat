@@ -4,12 +4,12 @@ A shared YouTube jukebox. Guests scan a QR code, add a song, and watch the share
 
 ## This server
 
-- Guest page: http://89.167.98.40:8090/
-- Host controls: http://89.167.98.40:8090/host
-- TV player: http://89.167.98.40:8090/player
-- Secure site: https://89.167.98.40:8443/
-- Personal accounts and private playlists: https://89.167.98.40:8443/personal
-- Fire TV app and installation guide: http://89.167.98.40:8090/tv-app
+- Guest page: https://qbeat.stream/
+- Host controls: https://qbeat.stream/host
+- TV player: https://qbeat.stream/player
+- Canonical site: https://qbeat.stream/
+- Personal accounts and private playlists: https://qbeat.stream/personal
+- Fire TV app and installation guide: https://qbeat.stream/tv-app
 - Source: `/srv/qbeat`
 - Configuration and host PIN: `/etc/qbeat.env` (root only; never commit)
 - SQLite database: `/var/lib/qbeat/queue.db`
@@ -62,7 +62,9 @@ node tests/test_native_player.cjs
 
 ## Hosting and device notes
 
-HTTPS is enabled on port 8443 with a publicly trusted Let's Encrypt IP certificate. Port 8090 remains available for existing shared-room clients. Personal account endpoints require HTTPS and use a separate Secure, HttpOnly, SameSite cookie with a random session token; only token hashes are stored. Passwords are hashed with Werkzeug's scrypt default. Account sessions last 30 days and sign-out revokes the current token. Password recovery uses a one-time recovery code shown on account creation, with no email service required; reset rotates that code and revokes existing sessions.
+The canonical site is https://qbeat.stream on standard port 443. HTTP and www redirect to the canonical HTTPS host. Its domain certificate covers qbeat.stream and www.qbeat.stream and uses the same automated renewal service as the legacy IP certificate. Domain routing is in `/etc/nginx/sites-available/qbeat-domain` (tracked example: `deploy/nginx-domain.conf`). HTTPS session cookies are marked Secure; the legacy HTTP guest interface remains compatible. Existing browser accounts can sign in again on the new host, and native app 1.2.2 uses the domain directly.
+
+Legacy HTTPS remains enabled on port 8443 with a publicly trusted Let's Encrypt IP certificate. Port 8090 remains available for existing shared-room clients. Personal account endpoints require HTTPS and use a separate Secure, HttpOnly, SameSite cookie with a random session token; only token hashes are stored. Passwords are hashed with Werkzeug's scrypt default. Account sessions last 30 days and sign-out revokes the current token. Password recovery uses a one-time recovery code shown on account creation, with no email service required; reset rotates that code and revokes existing sessions.
 
 The certificate is stored in `/etc/letsencrypt-qbeat`, separate from other applications' certificates. `qbeat-certificate-renew.timer` checks twice daily using `/opt/qbeat-certbot/bin/certbot`; successful renewal calls `/usr/local/sbin/qbeat-reload-tls`. An HTTP-01 challenge location was added to the active `/etc/nginx/sites-enabled/daytripr` server on port 80, serving only `/var/www/qbeat-acme/.well-known/acme-challenge/`. Preserve that location for renewals. A renewal dry run passed when HTTPS was installed. IP certificates are short lived, so keep the timer enabled. The public QR follows `PUBLIC_URL` in `/etc/qbeat.env`.
 

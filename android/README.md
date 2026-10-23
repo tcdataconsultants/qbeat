@@ -12,9 +12,13 @@ Native Java TV activity with a visible YouTube WebView player, native queue/QR s
 
 Install over version 1.0.0 to retain the host session. The same signing identity is used for updates. New native controls and launcher artwork require updating the APK; website changes arrive on refresh.
 
-Public download: https://89.167.98.40:8443/qbeat.apk?v=1.2.1
+Public download: https://qbeat.stream/qbeat.apk?v=1.2.2
 
-Installation guide: http://89.167.98.40:8090/tv-app
+Installation guide: https://qbeat.stream/tv-app
+
+## Version 1.2.2
+
+Uses https://qbeat.stream on standard HTTPS port 443. The package identity and signing key are unchanged, so install over an existing version to retain the host session, TV pairing identity, and device preferences. Legacy IP endpoints remain served for older installed builds.
 
 ## Version 1.2.1
 
@@ -48,12 +52,12 @@ To create a separate signing identity on another machine, use `keytool -genkeypa
 
 ## Architecture
 
-- Backend URL is a build-time constant in `MainActivity.java`: `https://89.167.98.40:8443`.
+- Backend URL is a build-time constant in `MainActivity.java`: `https://qbeat.stream`.
 - Host PIN is exchanged for a session cookie and is not stored. The session cookie is kept in app-private preferences. Sign out deletes it. No host PIN or YouTube API key is bundled in the APK.
 - Network requests run on a single background executor. Queue polling happens every three seconds while the activity is visible. Leaving the app stops heartbeats and pauses local playback. Another player can acquire the lease after 15 seconds.
 - The native activity exposes only player lifecycle events to a local HTML asset. The YouTube iframe remains visible with its controls. App client identity is provided through `loadDataWithBaseURL` using `https://com.tcdataconsultants.qbeat/`, following YouTube's documented WebView identity pattern. No video extraction or playback outside the official player is used.
 - Media playback does not require a WebView user gesture. Device-specific playback restrictions can still apply. Playback errors show their exact code and preserve the queue for retry or a manual skip.
-- The backend and YouTube resources use HTTPS. The manifest retains a legacy cleartext exception for the original backend IP, but version 1.2.0 makes its API calls to the secure port 8443 endpoint.
+- The backend and YouTube resources use HTTPS. The manifest retains a legacy cleartext exception for the original backend IP, but versions 1.2.0–1.2.1 use secure port 8443 and 1.2.2 uses the domain on port 443.
 - The native app keeps the display awake while visible. Back exits the video focus or prompts to leave; media play/pause controls the shared queue.
 
 ## Verification

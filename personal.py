@@ -1,5 +1,6 @@
 """Private accounts, playlists, and explicitly paired TV sources."""
 import hashlib
+import os
 import re
 import secrets
 import sqlite3
@@ -12,7 +13,7 @@ from urllib.error import HTTPError, URLError
 
 def register_personal(app, db, metadata, error, limited, format_track):
     bp = Blueprint('personal', __name__)
-    secure_url = 'https://89.167.98.40:8443'
+    secure_url = os.getenv('PUBLIC_URL', 'https://qbeat.stream').rstrip('/')
     with db() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS accounts (

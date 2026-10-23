@@ -45,6 +45,12 @@ class PersonalTests(unittest.TestCase):
         self.assertIsNone(self.alice.get('/api/personal/me',base_url=HTTPS).json['account'])
         self.assertEqual(self.alice.get('/api/personal/playlists',base_url=HTTPS).status_code,401)
 
+    def test_https_host_session_cookie_is_secure(self):
+        client=m.app.test_client()
+        response=client.post('/api/login',json={'pin':'12345678'},base_url=HTTPS)
+        self.assertIn('Secure;',response.headers['Set-Cookie'])
+        self.assertIn('HttpOnly',response.headers['Set-Cookie'])
+
     def test_playlists_are_private_and_never_add_to_room(self):
         self.signup(self.alice,'alice');self.signup(self.bob,'bob')
         pid=self.playlist(self.alice);self.add(self.alice,pid)

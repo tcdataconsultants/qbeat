@@ -17,15 +17,24 @@ from urllib.error import HTTPError, URLError
 import qrcode
 from PIL import Image, ImageOps, UnidentifiedImageError
 from flask import Flask, request, jsonify, session, send_file, send_from_directory
+from flask.sessions import SecureCookieSessionInterface
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__, static_folder='static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+
+class QbeatSessionInterface(SecureCookieSessionInterface):
+    def get_cookie_secure(self, application):
+        return request.is_secure or super().get_cookie_secure(application)
+
+
+app.session_interface = QbeatSessionInterface()
 app.secret_key = os.environ['SESSION_SECRET']
 app.config.update(MAX_CONTENT_LENGTH=524288, SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE') == '1')
 DB = os.getenv('DATABASE', '/var/lib/qbeat/queue.db')
-PUBLIC_URL = os.getenv('PUBLIC_URL', 'http://89.167.98.40:8090').rstrip('/')
+PUBLIC_URL = os.getenv('PUBLIC_URL', 'https://qbeat.stream').rstrip('/')
 HOST_PIN = os.environ['HOST_PIN']
 API_KEY = os.getenv('YOUTUBE_API_KEY', '')
 lock = threading.Lock()
@@ -230,7 +239,7 @@ def page():
 @app.get('/qr.png')
 def qr():
     out = io.BytesIO()
-    target = 'https://89.167.98.40:8443/personal' if request.args.get('target') == 'personal' else PUBLIC_URL + '/'
+    target = PUBLIC_URL + '/personal' if request.args.get('target') == 'personal' else PUBLIC_URL + '/'
     qrcode.make(target).save(out, format='PNG')
     out.seek(0)
     return send_file(out, mimetype='image/png')

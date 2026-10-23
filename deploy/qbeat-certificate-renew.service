@@ -1,5 +1,5 @@
 [Unit]
-Description=Renew Qbeat IP TLS certificate
+Description=Renew Qbeat domain and IP TLS certificates
 After=network-online.target
 
 [Service]

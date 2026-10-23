@@ -45,7 +45,7 @@ import java.util.concurrent.Executors;
 
 /** Native TV shell. Only the visible YouTube player uses a WebView. */
 public final class MainActivity extends Activity {
-    private static final String BASE = "https://89.167.98.40:8443";
+    private static final String BASE = "https://qbeat.stream";
     private static final String PLAYER_ORIGIN = "https://com.tcdataconsultants.qbeat/";
     private static final int BG=0xff111014, PANEL=0xff1b1921, INK=0xfff2f0e9, MUTED=0xffaaa6af, LIME=0xffd6fa77, PURPLE=0xffb2a0ed;
     private final Handler ui=new Handler(Looper.getMainLooper());
