@@ -90,13 +90,16 @@ window.onYouTubeIframeAPIReady = () => {
     onStateChange:e=>{if(e.data === YT.PlayerState.ENDED) finishTrack(); if(e.data === YT.PlayerState.PLAYING){blocked=false; $('player-message').textContent='Connected. The next song plays automatically.';}},
     onAutoplayBlocked:()=>{blocked=true;$('player-message').textContent='Press Play inside the YouTube video to enable sound.'; $('start-player').disabled=false; $('start-player').textContent='Enable sound ▶';},
     onError:e=>{
-      if([100,101,150,2,5].includes(e.data)) {toast('This video can’t play here. Moving to the next pick.'); finishTrack();}
-      else {blocked=true;$('player-message').textContent=`YouTube playback error ${e.data}. Try reloading this page or another browser.`;}
+      blocked=true;
+      const messages={2:'YouTube rejected this video request.',5:'This device could not play the video.',100:'This video is private or unavailable.',101:'YouTube has blocked this video in the embedded player.',150:'YouTube has blocked this video in the embedded player.',153:'YouTube could not identify this player. The browser may be blocking its referrer.'};
+      $('player-message').textContent=`YouTube error ${e.data}: ${messages[e.data] || 'Playback failed.'} The queue is preserved. Retry or skip this track.`;
+      $('start-player').disabled=false; $('start-player').textContent='Retry track ▶';
+      api('host/player',{client,error_code:e.data,song_id:loadedId}).catch(()=>{});
     }
   }});
 };
 $('start-player').onclick = async () => {
-  if(ready && started) {blocked=false;player.playVideo();return;}
+  if(ready && started) {blocked=false;loadedId=null;syncPlayer();player.playVideo();return;}
   $('start-player').disabled=true;
   try {
     await api('host/player',{client}); started=true; $('player-welcome').hidden=true;

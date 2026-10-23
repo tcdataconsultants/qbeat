@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="strict-origin-when-cross-origin"><style>html,body{margin:0;width:100%;height:100%;background:#080809;overflow:hidden}#player,iframe{position:absolute;inset:0;width:100%;height:100%;border:0}#idle{position:absolute;inset:0;display:grid;place-items:center;color:#b2a0ed;font:20px sans-serif;text-align:center;pointer-events:none}</style></head>
+<body><div id="player"></div><div id="idle">The room is yours.<br>Add a song to get things going.</div><script>
+let player,ready=false,pending=null,current=null;
+function onYouTubeIframeAPIReady(){player=new YT.Player('player',{host:'https://www.youtube.com',width:'100%',height:'100%',playerVars:{playsinline:1,controls:1,fs:0,origin:location.origin,widget_referrer:location.origin},events:{onReady:()=>{ready=true;Qbeat.ready();if(pending)loadTrack(pending.id,pending.paused)},onStateChange:e=>{if(e.data===0&&current)Qbeat.ended(current);if(e.data===1)Qbeat.playing()},onError:e=>Qbeat.error(e.data),onAutoplayBlocked:()=>Qbeat.blocked()}})}
+function loadTrack(id,paused){pending={id,paused};if(!ready)return;document.getElementById('idle').style.display='none';current=id;if(paused)player.cueVideoById(id);else player.loadVideoById(id)}
+function setPaused(paused){if(!ready)return;if(paused)player.pauseVideo();else player.playVideo()}
+function idle(){pending=null;current=null;if(ready)player.stopVideo();document.getElementById('idle').style.display='grid'}
+</script><script src="https://www.youtube.com/iframe_api" onerror="Qbeat.loadFailed()"></script></body></html>

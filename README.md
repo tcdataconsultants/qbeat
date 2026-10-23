@@ -7,6 +7,7 @@ A shared YouTube jukebox. Guests scan a QR code, add a song, and watch the share
 - Guest page: http://89.167.98.40:8090/
 - Host controls: http://89.167.98.40:8090/host
 - TV player: http://89.167.98.40:8090/player
+- Fire TV app and installation guide: http://89.167.98.40:8090/tv-app
 - Source: `/srv/qbeat`
 - Configuration and host PIN: `/etc/qbeat.env` (root only; never commit)
 - SQLite database: `/var/lib/qbeat/queue.db`
@@ -54,14 +55,17 @@ Run verification:
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
+node tests/test_native_player.cjs
 ```
 
 ## Hosting and device notes
 
 The initial address uses HTTP. For regular use, attach a domain with HTTPS, set `PUBLIC_URL` to that address and `COOKIE_SECURE=1` in `/etc/qbeat.env`, then restart. The QR code follows `PUBLIC_URL`.
 
-Use a browser on the TV or Firestick to open the player URL. Physical Firestick compatibility has not been verified. A laptop connected by HDMI can also run the same page. Playback uses YouTube's official visible iframe player; ads, regional restrictions, embedding restrictions, and device browser policies still apply. Unavailable videos are skipped. Guest devices don't play audio themselves.
+Use a browser on the TV or Firestick to open the player URL. Physical Firestick compatibility has not been verified. A laptop connected by HDMI can also run the same page. Playback uses YouTube's official visible iframe player; ads, regional restrictions, embedding restrictions, and device browser policies still apply. Playback errors show the exact YouTube code and preserve the current track for retry or a host skip. The last 100 errors are recorded for diagnosis. Guest devices don't play audio themselves.
 
 Guest additions are limited to three waiting tracks per browser, duplicate active videos are rejected, and the whole queue is capped at 100. This is a simple shared room; it does not yet support separate venues, votes, or moderation approval.
+
+The native Fire TV app source, build steps, signing arrangements, and device testing limitations are documented in [android/README.md](android/README.md).
 
 Back up `/var/lib/qbeat/queue.db` using SQLite's backup API and keep `/etc/qbeat.env` securely backed up separately. Never commit either file.

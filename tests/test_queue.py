@@ -15,6 +15,7 @@ class QueueTests(unittest.TestCase):
     def setUp(self):
         with m.db() as c:
             c.execute('DELETE FROM songs')
+            c.execute('DELETE FROM player_events')
             c.execute("UPDATE settings SET paused=0,accepting=1,player='',heartbeat=0")
         m.hits.clear()
         self.guest = m.app.test_client()
@@ -55,6 +56,26 @@ class QueueTests(unittest.TestCase):
     def test_only_one_player(self):
         self.host.post('/api/host/player', json={'client':'tv'})
         self.assertEqual(self.host.post('/api/host/player', json={'client':'second'}).status_code, 409)
+
+    def test_player_error_is_recorded_without_advancing_queue(self):
+        self.add(); self.add('bcdefghijkl')
+        self.host.post('/api/host/player', json={'client':'tv'})
+        song_id=self.state()['now']['id']
+        result=self.host.post('/api/host/player', json={'client':'tv','error_code':150,'song_id':song_id})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(self.state()['now']['id'],song_id)
+        self.assertEqual(len(self.state()['queue']),1)
+        self.assertIsNone(self.state()['last_player_error'])
+        self.assertEqual(self.host.get('/api/state').json['last_player_error']['code'],150)
+        with m.db() as c:
+            self.assertEqual(c.execute('SELECT status FROM songs WHERE id=?',(song_id,)).fetchone()[0],'playing')
+
+    def test_other_player_cannot_report_error(self):
+        self.add()
+        self.host.post('/api/host/player', json={'client':'tv'})
+        song_id=self.state()['now']['id']
+        self.assertEqual(self.host.post('/api/host/player', json={'client':'other','error_code':5,'song_id':song_id}).status_code,409)
+        self.assertIsNone(self.host.get('/api/state').json['last_player_error'])
 
     def test_pause_and_requests(self):
         self.host.post('/api/host/control', json={'action':'requests','enabled':False})

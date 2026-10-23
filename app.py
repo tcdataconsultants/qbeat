@@ -51,6 +51,9 @@ def init():
           paused INTEGER DEFAULT 0, accepting INTEGER DEFAULT 1,
           player TEXT DEFAULT '', heartbeat REAL DEFAULT 0);
         INSERT OR IGNORE INTO settings(id) VALUES(1);
+        CREATE TABLE IF NOT EXISTS player_events (
+          id INTEGER PRIMARY KEY, song_id INTEGER, code INTEGER NOT NULL,
+          browser TEXT NOT NULL, created REAL NOT NULL);
         ''')
 
 
@@ -146,16 +149,30 @@ def qr():
     return send_file(out, mimetype='image/png')
 
 
+@app.get('/tv-app')
+def tv_app_page():
+    return send_from_directory('static', 'tv-app.html')
+
+
+@app.get('/qbeat.apk')
+def tv_app_download():
+    return send_from_directory('static/downloads', 'qbeat-fire-tv.apk',
+                               mimetype='application/vnd.android.package-archive',
+                               as_attachment=True, download_name='Qbeat-Fire-TV.apk')
+
+
 @app.get('/api/state')
 def state():
     with db() as c:
         settings = dict(c.execute('SELECT * FROM settings WHERE id=1').fetchone())
         songs = [dict(r) for r in c.execute("SELECT id,video_id,title,artist,guest,status FROM songs WHERE status IN ('queued','playing') ORDER BY id")]
+        last_error = c.execute('SELECT song_id,code,browser,created FROM player_events ORDER BY id DESC LIMIT 1').fetchone() if session.get('host') else None
     return jsonify(now=next((s for s in songs if s['status'] == 'playing'), None),
                    queue=[s for s in songs if s['status'] == 'queued'],
                    paused=bool(settings['paused']), accepting=bool(settings['accepting']),
                    player_online=time.time() - settings['heartbeat'] < 15,
-                   host=bool(session.get('host')), search_enabled=bool(API_KEY), guest_url=PUBLIC_URL + '/')
+                   host=bool(session.get('host')), search_enabled=bool(API_KEY), guest_url=PUBLIC_URL + '/',
+                   last_player_error=dict(last_error) if last_error else None)
 
 
 @app.post('/api/login')
@@ -266,6 +283,15 @@ def player():
             return error('Another TV player is active. Close it and wait 15 seconds before starting this one.', 409)
         c.execute('UPDATE settings SET player=?,heartbeat=? WHERE id=1', (client, time.time()))
         current = c.execute("SELECT id FROM songs WHERE status='playing'").fetchone()
+        if data.get('error_code') is not None:
+            code = data['error_code']
+            if type(code) is not int or code not in (2, 5, 100, 101, 150, 153):
+                return error('Unknown player error code.')
+            if current and current['id'] == data.get('song_id'):
+                c.execute('INSERT INTO player_events(song_id,code,browser,created) VALUES(?,?,?,?)',
+                          (current['id'], code, request.user_agent.string[:300], time.time()))
+                c.execute('DELETE FROM player_events WHERE id <= (SELECT MAX(id)-100 FROM player_events)')
+                app.logger.warning('YouTube player error code=%s song_id=%s browser=%s', code, current['id'], request.user_agent.string[:300])
         if data.get('ended') is not None and current and current['id'] == data['ended']:
             c.execute("UPDATE songs SET status='played' WHERE id=?", (current['id'],))
             current = None

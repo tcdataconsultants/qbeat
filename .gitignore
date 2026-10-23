@@ -2,3 +2,7 @@
 __pycache__/
 *.db*
 .env
+android/build/
+static/downloads/
+*.jks
+*.keystore
