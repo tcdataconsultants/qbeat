@@ -21,7 +21,9 @@ with zipfile.ZipFile(base/'base.apk','a') as z:
     z.write(base/'dex/classes.dex','classes.dex')
 PY
 "$build_tools/zipalign" -f -p 4 "$build_dir/base.apk" "$build_dir/aligned.apk"
-"$build_tools/apksigner" sign --ks "$signing_dir/qbeat-release.jks" --ks-key-alias qbeat --ks-pass "file:$signing_dir/password" --out "$project_dir/static/downloads/qbeat-fire-tv.apk" "$build_dir/aligned.apk"
-"$build_tools/apksigner" verify --verbose "$project_dir/static/downloads/qbeat-fire-tv.apk"
+"$build_tools/apksigner" sign --ks "$signing_dir/qbeat-release.jks" --ks-key-alias qbeat --ks-pass "file:$signing_dir/password" --out "$build_dir/qbeat-signed.apk" "$build_dir/aligned.apk"
+"$build_tools/apksigner" verify --verbose "$build_dir/qbeat-signed.apk"
+cp "$build_dir/qbeat-signed.apk" "$project_dir/static/downloads/.qbeat-fire-tv.apk.tmp"
+mv "$project_dir/static/downloads/.qbeat-fire-tv.apk.tmp" "$project_dir/static/downloads/qbeat-fire-tv.apk"
 sha256sum "$project_dir/static/downloads/qbeat-fire-tv.apk" | cut -d ' ' -f 1 > "$project_dir/static/downloads/qbeat-fire-tv.apk.sha256"
 echo "Built static/downloads/qbeat-fire-tv.apk"

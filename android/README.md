@@ -2,6 +2,16 @@
 
 Native Java TV activity with a visible YouTube WebView player, native queue/QR sidebar, native PIN entry, and controls that support the Fire TV remote. Built for Fire OS / Android API 23 and later, landscape, no Google Play Services dependency. Vega OS devices require a different app and are not supported by this APK.
 
+## Version 1.1.0
+
+- Landscape artwork is explicitly assigned to the application and launcher activity.
+- **More → Fullscreen TV mode** hides Qbeat's chrome and sidebar. The remote's Menu button shows/hides controls; Back returns to the normal layout. This keeps the app fullscreen and the screen awake, but does not disable Fire TV's Home button or lock the device to Qbeat.
+- Subtitles default off, with a saved on/off preference under More. The player requests captions off and unloads its captions module when that API is available. Preferences or text embedded in the video itself can still affect what is shown. YouTube branding remains visible under its player rules.
+- During the final ten seconds, a **Coming next** strip appears below the player when a next song is queued. It does not cover the YouTube video or skip its ending. The clock follows the player's actual position.
+- Guest colours and icons appear with their tracks. The current guest's optional photo is shown alongside their name.
+
+Install over version 1.0.0 to retain the host session. The same signing identity is used for updates. New native controls and launcher artwork require updating the APK; website changes arrive on refresh.
+
 Public download: http://89.167.98.40:8090/qbeat.apk
 
 Installation guide: http://89.167.98.40:8090/tv-app
@@ -38,6 +48,6 @@ node tests/test_native_player.cjs       # exercises the WebView lifecycle bridge
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-APK compilation/signature and automated bridge/API tests do not establish physical Firestick compatibility. Test sign-in, D-pad focus, QR scanning, audio/video, pause/resume, song handoff, error recovery, background/foreground, and relaunch on the device before treating this as production-ready. The first build has not been run on a physical Firestick or Android emulator.
+APK compilation/signature and automated bridge/API tests do not establish physical Firestick compatibility. The user has confirmed version 1.0.0 plays on their Firestick. Version 1.1.0's new controls and layout still need physical-device verification; no Android emulator was used.
 
 References: [Fire TV manifest support](https://developer.amazon.com/docs/fire-tv/add-tv-support-to-an-existing-react-native-project.html), [YouTube embedded player identity](https://developers.google.com/youtube/terms/required-minimum-functionality#api-client-identity-and-credentials).

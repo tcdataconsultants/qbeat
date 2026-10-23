@@ -23,7 +23,17 @@
             <div class="section-heading"><h2>Make your pick</h2><span class="muted">01 / DISCOVER</span></div>
             <form id="search-form" class="search"><label class="sr-only" for="search">Song, artist, or YouTube link</label><input id="search" placeholder="Search a song, artist, or paste a YouTube link" required maxlength="160"><button aria-label="Search YouTube">Search ↗</button></form>
             <p id="search-hint" class="muted"></p>
-            <label class="name-label" for="guest-name">Your name <span class="muted">(optional)</span><input id="guest-name" placeholder="Who’s on the decks?" maxlength="30" autocomplete="nickname"></label>
+            <details id="guest-profile" class="guest-profile">
+              <summary><span id="profile-avatar" class="guest-avatar">♫</span><span><strong id="profile-label">Make it yours</strong><small>Your name, colour, icon or selfie</small></span><span class="profile-edit">Edit ✎</span></summary>
+              <form id="profile-form">
+                <label class="name-label" for="guest-name">Your name <input id="guest-name" placeholder="Your name (optional)" maxlength="30" autocomplete="nickname"></label>
+                <fieldset><legend>Name colour</legend><div id="profile-colors" class="profile-options"></div></fieldset>
+                <fieldset><legend>Choose your icon</legend><div id="profile-icons" class="profile-options"></div></fieldset>
+                <div class="profile-photo-controls"><label class="button secondary" for="profile-photo">Take or choose a selfie</label><input id="profile-photo" type="file" accept="image/*" hidden><button id="remove-photo" type="button" class="text-button" hidden>Remove photo</button></div>
+                <p class="profile-privacy">Optional: your photo is visible to everyone using this queue. You can remove it here at any time.</p>
+                <button id="save-profile" type="submit">Save my style ✓</button><span id="profile-status" role="status"></span>
+              </form>
+            </details>
             <div id="search-status" role="status" class="muted"></div><div id="results"></div>
             <div id="welcome" class="welcome"><span class="small-record">♫</span><h3>A little you. A little everyone.</h3><p>Add a song you love. We'll play it when it's your turn.</p><div class="tags"><span>Scan the QR</span><b>→</b><span>Pick a track</span><b>→</b><span>Hear it here</span></div></div>
           </div>
@@ -36,7 +46,8 @@
           <div id="player-content" hidden>
             <div class="section-heading"><h2>Now spinning</h2><button id="fullscreen" class="text-button">Fullscreen ⛶</button></div>
             <div class="video-box"><div id="youtube"></div><div id="player-welcome"><div class="small-record">▶</div><h3>Give the room a soundtrack.</h3><p>Connect this screen to play the shared queue.</p></div></div>
-            <div class="controls"><button id="start-player">Start player ▶</button><button id="player-pause" class="secondary">Pause</button><button id="player-skip" class="secondary">Skip →</button></div>
+            <div id="coming-next" class="coming-next" role="status" hidden></div>
+            <div class="controls"><button id="start-player">Start player ▶</button><button id="player-pause" class="secondary">Pause</button><button id="player-skip" class="secondary">Skip →</button><button id="captions" class="secondary" aria-pressed="false">Subtitles: off</button><button id="tv-mode" class="secondary">TV mode ⛶</button></div>
             <p id="player-message" role="status" class="muted">Press Start player once to enable sound on this screen.</p>
           </div>
           <div class="queue-heading section-heading"><h2>Up next <span id="queue-count" class="count">0</span></h2><span class="muted">THE COLLECTIVE MIX</span></div><div id="queue"></div>

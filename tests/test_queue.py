@@ -2,6 +2,11 @@ import importlib.util
 import os
 import tempfile
 import unittest
+import io
+import json
+import base64
+from urllib.error import HTTPError, URLError
+from PIL import Image
 from unittest.mock import patch
 
 tmp = tempfile.TemporaryDirectory()
@@ -16,6 +21,8 @@ class QueueTests(unittest.TestCase):
         with m.db() as c:
             c.execute('DELETE FROM songs')
             c.execute('DELETE FROM player_events')
+            c.execute('DELETE FROM search_cache')
+            c.execute('DELETE FROM profiles')
             c.execute("UPDATE settings SET paused=0,accepting=1,player='',heartbeat=0")
         m.hits.clear()
         self.guest = m.app.test_client()
@@ -100,6 +107,66 @@ class QueueTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
         with patch.object(m, 'API_KEY', ''):
             self.assertEqual(self.guest.get('/api/search?q=artist').status_code, 503)
+
+    def test_search_cache_and_eleven_character_artist(self):
+        payload={'items':[{'id':{'videoId':'abcdefghijk'},'snippet':{'title':'A &amp; B','channelTitle':'Artist'}}]}
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',return_value=payload) as remote:
+            first=self.guest.get('/api/search?q=LedZeppelin')
+            self.assertEqual(first.status_code,200)
+            self.assertEqual(first.json['results'][0]['title'],'A & B')
+            second=self.guest.get('/api/search?q=ledzeppelin')
+            self.assertTrue(second.json['cached'])
+            self.assertEqual(remote.call_count,1)
+            self.assertIn('q=LedZeppelin',remote.call_args[0][0])
+            m.metadata.assert_not_called()
+
+    def test_search_distinguishes_quota_and_configuration_errors(self):
+        for reason,phrase in [('quotaExceeded','daily search allowance'),('accessNotConfigured','API key')]:
+            upstream=HTTPError('https://example.invalid',403,'Forbidden',{},io.BytesIO(json.dumps({'error':{'errors':[{'reason':reason}]}}).encode()))
+            with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=upstream):
+                result=self.guest.get('/api/search?q=artist')
+                self.assertEqual(result.status_code,503)
+                self.assertIn(phrase,result.json['error'])
+
+    def test_artist_channel_results_do_not_break_video_search(self):
+        payload={'items':[
+            {'id':{'kind':'youtube#channel','channelId':'artist-channel'},'snippet':{'title':'Artist'}},
+            {'id':{'kind':'youtube#playlist','playlistId':'playlist'},'snippet':{'title':'Playlist'}},
+            {'id':{'kind':'youtube#video','videoId':'abcdefghijk'},'snippet':{'title':'Playable song','channelTitle':'Artist'}},
+            {'id':None,'snippet':{}},None]}
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',return_value=payload):
+            result=self.guest.get('/api/search?q=Slayyyter')
+            self.assertEqual(result.status_code,200)
+            self.assertEqual([v['title'] for v in result.json['results']],['Playable song'])
+
+    def test_search_retries_transient_errors_and_cache_survives_init(self):
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=[URLError('timeout'),{'items':[]}]) as remote:
+            self.assertEqual(self.guest.get('/api/search?q=test').status_code,200)
+            self.assertEqual(remote.call_count,2)
+            m.init()
+            self.assertTrue(self.guest.get('/api/search?q=TEST').json['cached'])
+
+    def test_profile_styles_follow_guest_and_are_isolated(self):
+        self.add()
+        self.assertEqual(self.guest.post('/api/profile',json={'name':'Alex','color':'#79d9f2','icon':'🎧'}).status_code,200)
+        song=self.state()['queue'][0]
+        self.assertEqual((song['guest'],song['guest_color'],song['guest_icon']),('Alex','#79d9f2','🎧'))
+        self.assertEqual(self.host.get('/api/profile').json['profile']['name'],'')
+        self.assertEqual(self.guest.post('/api/profile',json={'color':'red;display:none','icon':'🎧'}).status_code,400)
+
+    def test_selfie_is_sanitized_removable_and_invalid_images_rejected(self):
+        out=io.BytesIO();Image.new('RGB',(40,60),'red').save(out,'PNG')
+        raw='data:image/png;base64,'+base64.b64encode(out.getvalue()).decode()
+        result=self.guest.post('/api/profile/photo',json={'photo':raw})
+        self.assertEqual(result.status_code,200)
+        path=result.json['profile']['photo']
+        response=self.guest.get(path)
+        self.assertEqual(response.mimetype,'image/jpeg')
+        self.assertEqual(Image.open(io.BytesIO(response.data)).size,(256,256));response.close()
+        self.assertEqual(self.guest.post('/api/profile/photo',json={'photo':'data:image/png;base64,bm90YW5pbWFnZQ=='}).status_code,400)
+        result=self.guest.post('/api/profile/photo',json={'photo':None})
+        self.assertIsNone(result.json['profile']['photo'])
+        self.assertEqual(self.guest.get(path).status_code,404)
 
 
 if __name__ == '__main__':

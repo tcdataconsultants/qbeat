@@ -32,7 +32,7 @@ Create a Google Cloud project, enable **YouTube Data API v3**, and create an API
 sudo /srv/qbeat/.venv/bin/python /srv/qbeat/scripts/set-youtube-key.py
 ```
 
-The prompt hides the key, writes it to `/etc/qbeat.env`, and restarts Qbeat. The key stays on the server. Search results are cached for 15 minutes; YouTube's API search quota can still be exhausted. Link lookup remains available without an API key.
+The prompt hides the key, writes it to `/etc/qbeat.env`, and restarts Qbeat. The key stays on the server. Search results are cached in SQLite for 24 hours and survive restarts; YouTube's API search quota can still be exhausted. Link lookup remains available without an API key. Artist/channel results are ignored when building playable results. Transient failures retry once; quota, key access, and connection failures have distinct messages and sanitized server logs.
 
 ## Development
 
@@ -65,6 +65,8 @@ The initial address uses HTTP. For regular use, attach a domain with HTTPS, set 
 Use a browser on the TV or Firestick to open the player URL. Physical Firestick compatibility has not been verified. A laptop connected by HDMI can also run the same page. Playback uses YouTube's official visible iframe player; ads, regional restrictions, embedding restrictions, and device browser policies still apply. Playback errors show the exact YouTube code and preserve the current track for retry or a host skip. The last 100 errors are recorded for diagnosis. Guest devices don't play audio themselves.
 
 Guest additions are limited to three waiting tracks per browser, duplicate active videos are rejected, and the whole queue is capped at 100. This is a simple shared room; it does not yet support separate venues, votes, or moderation approval.
+
+Guests can open **Make it yours** to save a display name, name colour, and icon. An optional selfie is resized to 256×256 JPEG, stripped of image metadata, and stored under `/var/lib/qbeat/avatars`. Uploaded photos are visible to room visitors in the queue and can be removed by the guest from the same browser. Only a guest's session can edit their profile. Back up the avatars directory with the database if you want photos retained. The phone layout uses compact guest controls and 16px inputs to avoid iOS focus zoom.
 
 The native Fire TV app source, build steps, signing arrangements, and device testing limitations are documented in [android/README.md](android/README.md).
 

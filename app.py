@@ -1,4 +1,6 @@
 import html
+import base64
+import binascii
 import io
 import json
 import os
@@ -13,13 +15,14 @@ from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
 
 import qrcode
+from PIL import Image, ImageOps, UnidentifiedImageError
 from flask import Flask, request, jsonify, session, send_file, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__, static_folder='static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 app.secret_key = os.environ['SESSION_SECRET']
-app.config.update(MAX_CONTENT_LENGTH=8192, SESSION_COOKIE_HTTPONLY=True,
+app.config.update(MAX_CONTENT_LENGTH=524288, SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE') == '1')
 DB = os.getenv('DATABASE', '/var/lib/qbeat/queue.db')
 PUBLIC_URL = os.getenv('PUBLIC_URL', 'http://89.167.98.40:8090').rstrip('/')
@@ -28,6 +31,10 @@ API_KEY = os.getenv('YOUTUBE_API_KEY', '')
 lock = threading.Lock()
 hits = defaultdict(deque)
 cache = {}
+search_locks = [threading.Lock() for _ in range(64)]
+COLORS = ('#d6fa77', '#b2a0ed', '#ffb3c6', '#79d9f2', '#ffc978', '#91e5b0', '#f2f0e9', '#ff9d85')
+ICONS = ('♫', '🎧', '🎸', '🎤', '🪩', '✨', '🌴', '🦊', '🐱', '🔥', '💃', '🚀')
+AVATAR_DIR = os.path.join(os.path.dirname(DB), 'avatars')
 
 
 def db():
@@ -54,6 +61,11 @@ def init():
         CREATE TABLE IF NOT EXISTS player_events (
           id INTEGER PRIMARY KEY, song_id INTEGER, code INTEGER NOT NULL,
           browser TEXT NOT NULL, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS search_cache (
+          query TEXT PRIMARY KEY, results TEXT NOT NULL, expires REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS profiles (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#d6fa77',
+          icon TEXT NOT NULL DEFAULT '♫', photo TEXT);
         ''')
 
 
@@ -165,7 +177,12 @@ def tv_app_download():
 def state():
     with db() as c:
         settings = dict(c.execute('SELECT * FROM settings WHERE id=1').fetchone())
-        songs = [dict(r) for r in c.execute("SELECT id,video_id,title,artist,guest,status FROM songs WHERE status IN ('queued','playing') ORDER BY id")]
+        songs = [dict(r) for r in c.execute("""SELECT s.id,s.video_id,s.title,s.artist,s.status,
+            CASE WHEN p.name IS NOT NULL AND p.name!='' THEN p.name ELSE s.guest END AS guest,
+            COALESCE(p.color,'#d6fa77') AS guest_color,COALESCE(p.icon,'♫') AS guest_icon,
+            CASE WHEN p.photo IS NOT NULL THEN '/avatars/'||p.photo ELSE NULL END AS guest_photo
+            FROM songs s LEFT JOIN profiles p ON p.id=s.guest_id
+            WHERE s.status IN ('queued','playing') ORDER BY s.id""")]
         last_error = c.execute('SELECT song_id,code,browser,created FROM player_events ORDER BY id DESC LIMIT 1').fetchone() if session.get('host') else None
     return jsonify(now=next((s for s in songs if s['status'] == 'playing'), None),
                    queue=[s for s in songs if s['status'] == 'queued'],
@@ -173,6 +190,76 @@ def state():
                    player_online=time.time() - settings['heartbeat'] < 15,
                    host=bool(session.get('host')), search_enabled=bool(API_KEY), guest_url=PUBLIC_URL + '/',
                    last_player_error=dict(last_error) if last_error else None)
+
+
+def guest_profile():
+    with db() as c:
+        row = c.execute('SELECT name,color,icon,photo FROM profiles WHERE id=?', (session['guest_id'],)).fetchone()
+    profile = dict(row) if row else dict(name='', color=COLORS[0], icon=ICONS[0], photo=None)
+    if profile['photo']:
+        profile['photo'] = '/avatars/' + profile['photo']
+    return profile
+
+
+@app.get('/api/profile')
+def profile_get():
+    return jsonify(profile=guest_profile(), colors=COLORS, icons=ICONS)
+
+
+@app.post('/api/profile')
+def profile_update():
+    data = request.get_json() or {}
+    name = str(data.get('name', '')).strip()[:30]
+    color = data.get('color', COLORS[0])
+    icon = data.get('icon', ICONS[0])
+    if color not in COLORS or icon not in ICONS:
+        return error('Choose one of the available colours and icons.')
+    with db() as c:
+        c.execute('INSERT INTO profiles(id,name,color,icon) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,icon=excluded.icon',
+                  (session['guest_id'], name, color, icon))
+    return jsonify(profile=guest_profile())
+
+
+@app.post('/api/profile/photo')
+def profile_photo():
+    if limited(('photo', session['guest_id']), 8, 60):
+        return error('Please wait a minute before changing your photo again.', 429)
+    value = (request.get_json() or {}).get('photo')
+    filename = None
+    if value is not None:
+        if not isinstance(value, str) or len(value) > 280000:
+            return error('The photo is too large. Choose a smaller image.', 413)
+        match = re.fullmatch(r'data:image/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)', value)
+        if not match:
+            return error('Choose a JPEG, PNG, or WebP photo.')
+        try:
+            raw = base64.b64decode(match.group(1), validate=True)
+            image = Image.open(io.BytesIO(raw))
+            if image.width * image.height > 16000000:
+                return error('The photo resolution is too large.')
+            image = ImageOps.exif_transpose(image).convert('RGB')
+            image = ImageOps.fit(image, (256, 256), method=Image.Resampling.LANCZOS)
+        except (binascii.Error, UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            return error('We couldn’t read that photo. Try a different image.')
+        os.makedirs(AVATAR_DIR, exist_ok=True)
+        filename = secrets.token_hex(16) + '.jpg'
+        image.save(os.path.join(AVATAR_DIR, filename), 'JPEG', quality=85)
+    with db() as c:
+        old = c.execute('SELECT photo FROM profiles WHERE id=?', (session['guest_id'],)).fetchone()
+        c.execute('INSERT INTO profiles(id,photo) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET photo=excluded.photo', (session['guest_id'], filename))
+    if old and old['photo']:
+        try:
+            os.unlink(os.path.join(AVATAR_DIR, old['photo']))
+        except FileNotFoundError:
+            pass
+    return jsonify(profile=guest_profile())
+
+
+@app.get('/avatars/<filename>')
+def avatar(filename):
+    if not re.fullmatch(r'[a-f0-9]{32}\.jpg', filename):
+        return error('Photo not found.', 404)
+    return send_from_directory(AVATAR_DIR, filename, mimetype='image/jpeg', max_age=3600)
 
 
 @app.post('/api/login')
@@ -193,31 +280,91 @@ def logout():
 
 @app.get('/api/search')
 def search():
-    q = request.args.get('q', '').strip()[:160]
+    q = ' '.join(request.args.get('q', '').split())[:160]
     if len(q) < 2:
         return error('Enter an artist, song, or YouTube link.')
     if limited(('search', request.remote_addr), 20, 60):
         return error('Please wait a moment before searching again.', 429)
     try:
-        vid = video_id(q)
-        if vid:
-            return jsonify(results=[metadata(vid)])
+        is_link = bool(re.match(r'^(https?://|www\.|youtube\.com/|m\.youtube\.com/|music\.youtube\.com/|youtu\.be/)', q, re.I))
+        if is_link:
+            link = q if re.match(r'^https?://', q, re.I) else 'https://' + q
+            vid = video_id(link)
+            if not vid:
+                return error('Paste a link to a single YouTube video, or search by song and artist.', 422)
+            try:
+                return jsonify(results=[metadata(vid)])
+            except HTTPError as e:
+                if e.code in (400, 401, 403, 404):
+                    return error('That YouTube video is unavailable or private. Try a different link.', 422)
+                raise
         if not API_KEY:
             return error('Song search needs a YouTube API key. For now, paste a YouTube video link above.', 503)
-        key = 'search:' + q.lower()
-        if key in cache and cache[key][0] > time.time():
-            return jsonify(results=cache[key][1])
-        data = remote_json('https://www.googleapis.com/youtube/v3/search?' + urlencode(dict(
-            key=API_KEY, part='snippet', type='video', videoEmbeddable='true',
-            videoCategoryId='10', safeSearch='moderate', maxResults=12, q=q)))
-        results = [dict(video_id=v['id']['videoId'], title=html.unescape(v['snippet']['title']),
-                        artist=html.unescape(v['snippet']['channelTitle'])) for v in data.get('items', [])]
-        if len(cache) > 1000:
-            cache.clear()
-        cache[key] = (time.time() + 900, results)
-        return jsonify(results=results)
-    except (HTTPError, URLError, TimeoutError, ValueError, KeyError):
-        return error('YouTube could not return this request. Check the link, or try again later. Search may have reached its daily limit.', 502)
+        key = q.casefold()
+        with search_locks[hash(key) % len(search_locks)]:
+            with db() as c:
+                saved = c.execute('SELECT results FROM search_cache WHERE query=? AND expires>?', (key, time.time())).fetchone()
+            if saved:
+                return jsonify(results=json.loads(saved['results']), cached=True)
+            url = 'https://www.googleapis.com/youtube/v3/search?' + urlencode(dict(
+                key=API_KEY, part='snippet', type='video', videoEmbeddable='true',
+                videoCategoryId='10', safeSearch='moderate', maxResults=12, q=q))
+            for attempt in range(2):
+                try:
+                    data = remote_json(url)
+                    break
+                except HTTPError as e:
+                    if attempt == 0 and e.code in (500, 502, 503, 504):
+                        time.sleep(0.2)
+                        continue
+                    raise
+                except (URLError, TimeoutError):
+                    if attempt == 0:
+                        time.sleep(0.2)
+                        continue
+                    raise
+            results = []
+            for item in data.get('items', []):
+                if not isinstance(item, dict):
+                    continue
+                identity = item.get('id') or {}
+                snippet = item.get('snippet') or {}
+                if not isinstance(identity, dict) or not isinstance(snippet, dict):
+                    continue
+                vid = identity.get('videoId')
+                title = snippet.get('title')
+                artist = snippet.get('channelTitle', 'YouTube')
+                if not isinstance(vid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) or not isinstance(title, str):
+                    continue
+                results.append(dict(video_id=vid, title=html.unescape(title),
+                                    artist=html.unescape(artist) if isinstance(artist, str) else 'YouTube'))
+            with db() as c:
+                c.execute('INSERT OR REPLACE INTO search_cache(query,results,expires) VALUES(?,?,?)',
+                          (key, json.dumps(results), time.time() + 86400))
+                c.execute('DELETE FROM search_cache WHERE expires<?', (time.time(),))
+            return jsonify(results=results, cached=False)
+    except HTTPError as e:
+        try:
+            details = json.load(e).get('error', {})
+            reasons = {v.get('reason', '') for v in details.get('errors', [])}
+            reasons.add(details.get('status', ''))
+        except (ValueError, AttributeError, TypeError):
+            reasons = set()
+        safe_reasons = ','.join(sorted(re.sub(r'[^A-Za-z0-9_.-]', '', str(v))[:80] for v in reasons if v))
+        app.logger.warning('YouTube search failed status=%s reasons=%s', e.code, safe_reasons or 'unspecified')
+        if reasons & {'quotaExceeded', 'dailyLimitExceeded', 'RESOURCE_EXHAUSTED'}:
+            return error('YouTube’s daily search allowance has been used. Try a previously searched artist or paste a YouTube video link. New searches return after the quota resets.', 503)
+        if reasons & {'rateLimitExceeded', 'userRateLimitExceeded'} or e.code == 429:
+            return error('YouTube is receiving too many search requests. Wait a minute and try again, or paste a YouTube link.', 429)
+        if e.code in (400, 401, 403):
+            return error('YouTube search access was rejected. The host should check the API key, API restrictions, and that YouTube Data API v3 is enabled. You can still paste a video link.', 503)
+        return error('YouTube search is temporarily unavailable. Please retry in a moment or paste a YouTube video link.', 502)
+    except (URLError, TimeoutError):
+        app.logger.warning('YouTube search connection timed out or was unavailable')
+        return error('YouTube did not respond in time. Please try again, or paste a YouTube video link.', 504)
+    except (ValueError, KeyError, TypeError):
+        app.logger.warning('YouTube search returned an invalid response')
+        return error('YouTube returned an unreadable search response. Please try again.', 502)
 
 
 @app.post('/api/queue')
