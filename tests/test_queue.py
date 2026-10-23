@@ -26,6 +26,7 @@ class QueueTests(unittest.TestCase):
             c.execute('DELETE FROM video_details')
             c.execute("UPDATE settings SET paused=0,accepting=1,player='',heartbeat=0")
         m.hits.clear()
+        m.search_retry_until = 0
         self.guest = m.app.test_client()
         self.host = m.app.test_client()
         self.host.post('/api/login', json={'pin': '12345678'})
@@ -153,6 +154,31 @@ class QueueTests(unittest.TestCase):
                 result=self.guest.get('/api/search?q=artist')
                 self.assertEqual(result.status_code,503)
                 self.assertIn(phrase,result.json['error'])
+
+    def test_temporary_rate_limit_has_retry_time_and_cooldown(self):
+        body={'error':{'status':'RESOURCE_EXHAUSTED','errors':[{'reason':'rateLimitExceeded'}]}}
+        upstream=HTTPError('https://example.invalid',429,'Too many requests',{'Retry-After':'15'},io.BytesIO(json.dumps(body).encode()))
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=upstream) as remote:
+            result=self.guest.get('/api/search?q=first')
+            self.assertEqual(result.status_code,429)
+            self.assertIn('wait 15 seconds',result.json['error'])
+            self.assertNotIn('daily',result.json['error'])
+            self.assertEqual(result.headers['Retry-After'],'15')
+            self.assertEqual(self.guest.get('/api/search?q=second').status_code,429)
+            self.assertEqual(remote.call_count,1)
+            with m.db() as c:
+                c.execute('INSERT INTO search_cache VALUES(?,?,?)',('saved','[]',m.time.time()+300))
+            self.assertEqual(self.guest.get('/api/search?q=saved').status_code,200)
+
+    def test_daily_limit_metadata_overrides_generic_rate_reason(self):
+        body={'error':{'status':'RESOURCE_EXHAUSTED','errors':[{'reason':'rateLimitExceeded'}],
+                       'details':[{'metadata':{'quota_limit':'defaultSearchListPerDayPerProject','quota_unit':'1/d/{project}'}}]}}
+        upstream=HTTPError('https://example.invalid',429,'Too many requests',{},io.BytesIO(json.dumps(body).encode()))
+        with patch.object(m,'API_KEY','test-key'),patch.object(m,'remote_json',side_effect=upstream):
+            result=self.guest.get('/api/search?q=artist')
+            self.assertEqual(result.status_code,503)
+            self.assertIn('daily search allowance',result.json['error'])
+            self.assertEqual(m.search_retry_until,0)
 
     def test_artist_channel_results_do_not_break_video_search(self):
         payload={'items':[

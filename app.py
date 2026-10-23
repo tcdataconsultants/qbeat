@@ -41,6 +41,7 @@ lock = threading.Lock()
 hits = defaultdict(deque)
 cache = {}
 search_locks = [threading.Lock() for _ in range(64)]
+search_retry_until = 0
 COLORS = ('#d6fa77', '#b2a0ed', '#ffb3c6', '#79d9f2', '#ffc978', '#91e5b0', '#f2f0e9', '#ff9d85')
 ICONS = ('♫', '🎧', '🎸', '🎤', '🪩', '✨', '🌴', '🦊', '🐱', '🔥', '💃', '🚀', '💖')
 AVATAR_DIR = os.path.join(os.path.dirname(DB), 'avatars')
@@ -132,6 +133,13 @@ def metadata(vid):
 
 def error(message, status=400):
     return jsonify(error=message), status
+
+
+def search_rate_error(seconds):
+    seconds = max(1, int(seconds))
+    response, status = error(f'YouTube is receiving too many search requests. Please wait {seconds} seconds and try again. Previously searched artists and YouTube links still work.', 429)
+    response.headers['Retry-After'] = str(seconds)
+    return response, status
 
 
 def format_track(song):
@@ -364,6 +372,7 @@ def logout():
 
 @app.get('/api/search')
 def search():
+    global search_retry_until
     q = ' '.join(request.args.get('q', '').split())[:160]
     if len(q) < 2:
         return error('Enter an artist, song, or YouTube link.')
@@ -391,6 +400,8 @@ def search():
                 saved = c.execute('SELECT results FROM search_cache WHERE query=? AND expires>?', (key, time.time())).fetchone()
             if saved:
                 return jsonify(results=enrich_durations(json.loads(saved['results'])), cached=True)
+            if search_retry_until > time.time():
+                return search_rate_error(int(search_retry_until - time.time()) + 1)
             url = 'https://www.googleapis.com/youtube/v3/search?' + urlencode(dict(
                 key=API_KEY, part='snippet', type='video', videoEmbeddable='true',
                 videoCategoryId='10', safeSearch='moderate', maxResults=12, q=(q + ' karaoke lyrics') if karaoke else q))
@@ -430,18 +441,32 @@ def search():
                 c.execute('DELETE FROM search_cache WHERE expires<?', (time.time(),))
             return jsonify(results=results, cached=False)
     except HTTPError as e:
+        details = {}
         try:
             details = json.load(e).get('error', {})
             reasons = {v.get('reason', '') for v in details.get('errors', [])}
             reasons.add(details.get('status', ''))
         except (ValueError, AttributeError, TypeError):
+            details = {}
             reasons = set()
         safe_reasons = ','.join(sorted(re.sub(r'[^A-Za-z0-9_.-]', '', str(v))[:80] for v in reasons if v))
         app.logger.warning('YouTube search failed status=%s reasons=%s', e.code, safe_reasons or 'unspecified')
-        if reasons & {'quotaExceeded', 'dailyLimitExceeded', 'RESOURCE_EXHAUSTED'}:
+        metadata = [entry.get('metadata', {}) for entry in details.get('details', []) if isinstance(entry, dict)]
+        daily = bool(reasons & {'quotaExceeded', 'dailyLimitExceeded'}) or any(
+            isinstance(value, dict) and ('/d/' in str(value.get('quota_unit', '')) or 'perday' in str(value.get('quota_limit', '')).lower())
+            for value in metadata)
+        if daily:
             return error('YouTube’s daily search allowance has been used. Try a previously searched artist or paste a YouTube video link. New searches return after the quota resets.', 503)
         if reasons & {'rateLimitExceeded', 'userRateLimitExceeded'} or e.code == 429:
-            return error('YouTube is receiving too many search requests. Wait a minute and try again, or paste a YouTube link.', 429)
+            try:
+                wait = max(1, min(300, int((e.headers or {}).get('Retry-After', '60'))))
+            except (ValueError, TypeError):
+                wait = 60
+            with lock:
+                search_retry_until = max(search_retry_until, time.time() + wait)
+            return search_rate_error(wait)
+        if 'RESOURCE_EXHAUSTED' in reasons:
+            return error('YouTube’s search limit has been reached. Try again later, use a previously searched artist, or paste a YouTube video link.', 503)
         if e.code in (400, 401, 403):
             return error('YouTube search access was rejected. The host should check the API key, API restrictions, and that YouTube Data API v3 is enabled. You can still paste a video link.', 503)
         return error('YouTube search is temporarily unavailable. Please retry in a moment or paste a YouTube video link.', 502)
